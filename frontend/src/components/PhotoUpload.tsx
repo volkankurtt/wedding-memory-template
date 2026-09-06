@@ -1,14 +1,21 @@
 import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
+import { toUserMessage, uploadPhoto } from '../api/client'
 import { ACCEPT_ATTR, UPLOAD_LIMITS } from '../config/limits'
 import { useGuestState } from '../context/GuestState'
-import type { Photo } from '../types'
 import { IconCamera } from './Icons'
 
-type Preview = {
+type UploadStatus = 'WAITING' | 'UPLOADING' | 'SUCCESS' | 'FAILED'
+
+type QueueItem = {
+  id: string
   file: File
   url: string | null
   heic: boolean
+  status: UploadStatus
+  error: string | null
 }
+
+const MAX_CONCURRENCY = 3
 
 function isHeic(file: File) {
   const name = file.name.toLowerCase()
@@ -39,20 +46,44 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function statusLabel(item: QueueItem) {
+  if (item.status === 'WAITING') return 'Bekliyor'
+  if (item.status === 'UPLOADING') return 'Yükleniyor'
+  if (item.status === 'SUCCESS') return 'Yüklendi'
+  return item.error ?? 'Yüklenemedi'
+}
+
+async function runPool(ids: string[], worker: (id: string) => Promise<void>) {
+  let next = 0
+  const runners = Array.from({ length: Math.min(MAX_CONCURRENCY, ids.length) }, async () => {
+    while (next < ids.length) {
+      const current = next
+      next += 1
+      await worker(ids[current])
+    }
+  })
+  await Promise.all(runners)
+}
+
 type Props = {
   onDone?: () => void
   onCancel?: () => void
 }
 
 export function PhotoUpload({ onDone, onCancel }: Props) {
-  const { addPhotos } = useGuestState()
-  const [previews, setPreviews] = useState<Preview[]>([])
+  const { prependPhotos } = useGuestState()
+  const [queue, setQueue] = useState<QueueItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState<string | null>(null)
 
-  const countLabel = useMemo(() => `${previews.length} / ${UPLOAD_LIMITS.maxFilesPerRequest} fotoğraf seçildi`, [previews.length])
+  const selected = queue.filter((item) => item.status !== 'SUCCESS')
+  const successCount = queue.filter((item) => item.status === 'SUCCESS').length
+  const countLabel = useMemo(
+    () => `${queue.length} / ${UPLOAD_LIMITS.maxFilesPerRequest} fotoğraf seçildi`,
+    [queue.length],
+  )
 
   function onPick(event: ChangeEvent<HTMLInputElement>) {
     setError(null)
@@ -67,7 +98,7 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
       return
     }
 
-    setPreviews((current) => {
+    setQueue((current) => {
       if (current.length + files.length > UPLOAD_LIMITS.maxFilesPerRequest) {
         setError(
           `Tek seferde en fazla ${UPLOAD_LIMITS.maxFilesPerRequest} fotoğraf seçebilirsiniz. Şu an ${current.length} fotoğraf seçili.`,
@@ -75,7 +106,7 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
         return current
       }
 
-      const next: Preview[] = []
+      const next: QueueItem[] = []
       const problems: string[] = []
       for (const file of files) {
         if (!isAllowed(file)) {
@@ -87,9 +118,12 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
           continue
         }
         next.push({
+          id: crypto.randomUUID(),
           file,
           heic: isHeic(file),
           url: isHeic(file) ? null : URL.createObjectURL(file),
+          status: 'WAITING',
+          error: null,
         })
       }
 
@@ -100,52 +134,84 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
     })
   }
 
-  function removeAt(index: number) {
-    setPreviews((current) => {
-      const copy = [...current]
-      const [removed] = copy.splice(index, 1)
+  function removeAt(id: string) {
+    setQueue((current) => {
+      const removed = current.find((item) => item.id === id)
       if (removed?.url) URL.revokeObjectURL(removed.url)
-      setInfo(`${copy.length} / ${UPLOAD_LIMITS.maxFilesPerRequest} fotoğraf seçildi`)
-      return copy
+      const next = current.filter((item) => item.id !== id)
+      setInfo(`${next.length} / ${UPLOAD_LIMITS.maxFilesPerRequest} fotoğraf seçildi`)
+      return next
     })
+  }
+
+  async function uploadOne(id: string) {
+    let file: File | undefined
+    setQueue((current) => {
+      file = current.find((item) => item.id === id)?.file
+      return current.map((item) =>
+        item.id === id ? { ...item, status: 'UPLOADING', error: null } : item,
+      )
+    })
+    if (!file) return
+
+    try {
+      const photo = await uploadPhoto(file)
+      prependPhotos([photo])
+      setQueue((current) =>
+        current.map((item) => (item.id === id ? { ...item, status: 'SUCCESS', error: null } : item)),
+      )
+    } catch (cause) {
+      const message = toUserMessage(cause)
+      setQueue((current) =>
+        current.map((item) =>
+          item.id === id ? { ...item, status: 'FAILED', error: message } : item,
+        ),
+      )
+    }
+  }
+
+  async function uploadIds(ids: string[]) {
+    if (!ids.length) return
+    setBusy(true)
+    setError(null)
+    setDone(null)
+    await runPool(ids, uploadOne)
+    setQueue((current) => {
+      const ok = current.filter((item) => item.status === 'SUCCESS').length
+      const failed = current.filter((item) => item.status === 'FAILED').length
+      setInfo(`${ok} / ${current.length} fotoğraf yüklendi`)
+      if (failed === 0 && ok > 0) {
+        setDone('Fotoğraflarınız başarıyla eklendi')
+        window.setTimeout(() => onDone?.(), 1200)
+      } else if (failed > 0) {
+        setError('Bazı fotoğraflar yüklenemedi. Tekrar deneyebilirsiniz.')
+      }
+      return current
+    })
+    setBusy(false)
   }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
-    if (!previews.length) {
+    if (!queue.length) {
       setError('Lütfen en az bir fotoğraf seçin.')
       return
     }
-    if (previews.length > UPLOAD_LIMITS.maxFilesPerRequest) {
+    if (queue.length > UPLOAD_LIMITS.maxFilesPerRequest) {
       setError(`Tek seferde en fazla ${UPLOAD_LIMITS.maxFilesPerRequest} fotoğraf yükleyebilirsiniz.`)
       return
     }
-    const oversized = previews.find((item) => item.file.size > UPLOAD_LIMITS.maxFileSizeBytes)
+    const oversized = queue.find((item) => item.file.size > UPLOAD_LIMITS.maxFileSizeBytes)
     if (oversized) {
       setError(`${oversized.file.name} dosyası ${UPLOAD_LIMITS.maxFileSizeMb} MB sınırını aşıyor.`)
       return
     }
+    const pending = queue.filter((item) => item.status === 'WAITING' || item.status === 'FAILED')
+    await uploadIds(pending.map((item) => item.id))
+  }
 
-    setBusy(true)
-    setError(null)
-    await new Promise((resolve) => window.setTimeout(resolve, 500))
-
-    const uploaded: Photo[] = previews.map((item) => ({
-      id: crypto.randomUUID(),
-      fileName: item.file.name,
-      fileUrl: item.url ?? '',
-      createdAt: new Date().toISOString(),
-      isLocal: true,
-    }))
-
-    addPhotos(uploaded.filter((photo) => photo.fileUrl))
-    previews.forEach((item) => {
-      if (item.heic && item.url) URL.revokeObjectURL(item.url)
-    })
-    setPreviews([])
-    setBusy(false)
-    setDone('Fotoğraflarınız başarıyla eklendi')
-    window.setTimeout(() => onDone?.(), 1200)
+  function retryOne(id: string) {
+    void uploadIds([id])
   }
 
   return (
@@ -164,15 +230,15 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
       </div>
 
       <label className="file-drop">
-        <input type="file" accept={ACCEPT_ATTR} multiple onChange={onPick} />
+        <input type="file" accept={ACCEPT_ATTR} multiple disabled={busy} onChange={onPick} />
         <span>Fotoğraf seç</span>
         <small>{countLabel}</small>
       </label>
 
-      {previews.length ? (
+      {queue.length ? (
         <ul className="preview-grid">
-          {previews.map((item, index) => (
-            <li key={`${item.file.name}-${item.file.size}-${index}`}>
+          {queue.map((item) => (
+            <li key={item.id}>
               {item.url ? (
                 <img src={item.url} alt="" />
               ) : (
@@ -183,9 +249,17 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
               )}
               <p>{item.file.name}</p>
               <p className="preview-size">{formatSize(item.file.size)}</p>
-              <button type="button" className="text-btn" onClick={() => removeAt(index)}>
-                Kaldır
-              </button>
+              <p className={item.status === 'FAILED' ? 'form-error' : 'preview-size'}>{statusLabel(item)}</p>
+              {item.status === 'FAILED' ? (
+                <button type="button" className="text-btn" disabled={busy} onClick={() => retryOne(item.id)}>
+                  Tekrar Dene
+                </button>
+              ) : null}
+              {item.status === 'WAITING' ? (
+                <button type="button" className="text-btn" disabled={busy} onClick={() => removeAt(item.id)}>
+                  Kaldır
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -193,15 +267,21 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
 
       <div className={onCancel ? 'dialog-actions' : undefined}>
         {onCancel ? (
-          <button className="btn btn--outline" type="button" onClick={onCancel}>
+          <button className="btn btn--outline" type="button" onClick={onCancel} disabled={busy}>
             İptal
           </button>
         ) : null}
-        <button className="btn btn--warm" type="submit" disabled={busy || !previews.length}>
+        <button className="btn btn--warm" type="submit" disabled={busy || !selected.length}>
           {busy ? 'Yükleniyor…' : 'Yükle'}
         </button>
       </div>
-      {info && !error ? <p className="form-note">{info}</p> : null}
+      {busy ? (
+        <p className="form-note">
+          {successCount} / {queue.length} fotoğraf yüklendi
+        </p>
+      ) : info && !error ? (
+        <p className="form-note">{info}</p>
+      ) : null}
       {error ? <p className="form-error">{error}</p> : null}
       {done ? <p className="form-note">{done}</p> : null}
     </form>

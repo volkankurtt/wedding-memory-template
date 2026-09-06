@@ -1,0 +1,19 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:dugun;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+app:
+  supabase:
+    url: https://example.supabase.co
+    service-role-key: test-key
+    storage-bucket: guest-photos

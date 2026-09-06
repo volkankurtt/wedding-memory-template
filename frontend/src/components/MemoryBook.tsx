@@ -15,7 +15,7 @@ type Props = {
 }
 
 export function MemoryBook({ onWrite }: Props) {
-  const { memories } = useGuestState()
+  const { memories, memoriesLoading, loadError } = useGuestState()
 
   return (
     <section className="memory-band" id="memories">
@@ -25,7 +25,10 @@ export function MemoryBook({ onWrite }: Props) {
       <button className="btn btn--warm" type="button" onClick={onWrite}>
         Anı Bırak
       </button>
-      {memories.length === 0 ? (
+      {loadError ? <p className="form-error">{loadError}</p> : null}
+      {memoriesLoading && memories.length === 0 ? (
+        <p className="memory-band__empty">Notlar yükleniyor…</p>
+      ) : memories.length === 0 ? (
         <p className="memory-band__empty">{wedding.memoriesEmpty}</p>
       ) : (
         <ul className="memory-notes">

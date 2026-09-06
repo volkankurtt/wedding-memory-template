@@ -6,7 +6,7 @@ import { IconGallery } from '../components/Icons'
 import { Lightbox } from '../components/Lightbox'
 
 export function GalleryPage() {
-  const { photos } = useGuestState()
+  const { photos, photosLoading, loadError } = useGuestState()
   const [openIndex, setOpenIndex] = useState<number | null>(null)
   const visible = photos.filter((photo) => photo.fileUrl)
 
@@ -19,7 +19,12 @@ export function GalleryPage() {
           <IconGallery size={20} />
         </h1>
         <p>Bu güzel geceden paylaşılan kareleri burada görebilirsiniz.</p>
-        {visible.length === 0 ? <p className="subpage__empty">{wedding.galleryEmpty}</p> : null}
+        {loadError ? <p className="form-error">{loadError}</p> : null}
+        {photosLoading && visible.length === 0 ? (
+          <p className="subpage__empty">Fotoğraflar yükleniyor…</p>
+        ) : visible.length === 0 ? (
+          <p className="subpage__empty">{wedding.galleryEmpty}</p>
+        ) : null}
       </header>
       {visible.length ? (
         <ul className="gallery-grid">
