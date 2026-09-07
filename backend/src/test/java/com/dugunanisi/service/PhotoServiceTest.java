@@ -71,6 +71,9 @@ class PhotoServiceTest {
 		assertThat(response.fileName()).isEqualTo("IMG_1000.HEIC");
 		assertThat(response.fileUrl()).startsWith("https://example.supabase.co/storage/v1/object/public/guest-photos/");
 		assertThat(response.fileUrl()).endsWith("/display.jpg");
+		assertThat(response.displayUrl()).isEqualTo(response.fileUrl());
+		assertThat(response.originalUrl()).endsWith("/original");
+		assertThat(response.originalUrl()).doesNotContain("display.jpg");
 		assertThat(response.fileUrl()).doesNotContain("IMG_1000");
 
 		ArgumentCaptor<Photo> captor = ArgumentCaptor.forClass(Photo.class);

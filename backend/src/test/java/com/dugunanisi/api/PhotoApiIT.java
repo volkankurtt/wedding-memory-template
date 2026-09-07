@@ -39,6 +39,8 @@ class PhotoApiIT {
 				.andExpect(jsonPath("$.id").isNotEmpty())
 				.andExpect(jsonPath("$.fileName").value("masa.jpg"))
 				.andExpect(jsonPath("$.fileUrl").value(endsWith("/display.jpg")))
+				.andExpect(jsonPath("$.displayUrl").value(endsWith("/display.jpg")))
+				.andExpect(jsonPath("$.originalUrl").value(endsWith("/original")))
 				.andExpect(jsonPath("$.fileUrl").value(not(org.hamcrest.Matchers.containsString("masa.jpg"))))
 				.andExpect(jsonPath("$.createdAt").isNotEmpty());
 
@@ -46,7 +48,9 @@ class PhotoApiIT {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$", hasSize(1)))
 				.andExpect(jsonPath("$[0].fileName").value("masa.jpg"))
-				.andExpect(jsonPath("$[0].fileUrl").value(endsWith("/display.jpg")));
+				.andExpect(jsonPath("$[0].fileUrl").value(endsWith("/display.jpg")))
+				.andExpect(jsonPath("$[0].displayUrl").value(endsWith("/display.jpg")))
+				.andExpect(jsonPath("$[0].originalUrl").value(endsWith("/original")));
 	}
 
 	@Test
