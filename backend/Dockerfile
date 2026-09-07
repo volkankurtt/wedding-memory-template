@@ -23,6 +23,6 @@ RUN apt-get update \
 		sed -i 's/rights="none" pattern="HEIC"/rights="read|write" pattern="HEIC"/g; s/rights="none" pattern="HEIF"/rights="read|write" pattern="HEIF"/g' /etc/ImageMagick-6/policy.xml; \
 	fi
 WORKDIR /app
-COPY --from=build /app/target/backend-0.0.1-SNAPSHOT.jar app.jar
+COPY --from=build /app/target/backend-0.0.1-SNAPSHOT.jar /app.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "/app.jar"]
