@@ -43,10 +43,12 @@ public class ImageMagickImageConverter implements ImageConverter {
 	public byte[] toDisplayJpeg(byte[] original, DetectedImageType type) {
 		if (type == DetectedImageType.JPEG || type == DetectedImageType.PNG || type == DetectedImageType.WEBP) {
 			try {
-				return resizeWithImageIo(original);
+				byte[] jpeg = resizeWithImageIo(original);
+				log.info("ImageIO display jpeg ready type={} bytes={}", type, jpeg.length);
+				return jpeg;
 			}
 			catch (Exception exception) {
-				log.warn("ImageIO conversion failed for {}, falling back to ImageMagick", type, exception);
+				throw new ImageConversionException("Fotoğraf görüntüye dönüştürülemedi.", exception);
 			}
 		}
 		return convertWithMagick(original, type);

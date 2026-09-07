@@ -57,6 +57,11 @@ public class PhotoService {
 
 	@Transactional
 	public PhotoResponse upload(MultipartFile file) {
+		log.info("POST /api/photos received empty={} size={} contentType={} name={}",
+				file == null || file.isEmpty(),
+				file == null ? -1 : file.getSize(),
+				file == null ? null : file.getContentType(),
+				file == null ? null : safeFileName(file.getOriginalFilename()));
 		if (file == null || file.isEmpty()) {
 			throw new ApiException(HttpStatus.BAD_REQUEST, "Lütfen bir fotoğraf seçin.");
 		}

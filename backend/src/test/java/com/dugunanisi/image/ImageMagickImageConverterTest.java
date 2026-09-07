@@ -23,6 +23,18 @@ class ImageMagickImageConverterTest {
 	}
 
 	@Test
+	void unreadableJpegFailsFastWithoutMagick() {
+		AppProperties properties = new AppProperties();
+		properties.getImageMagick().setCommand("magick-does-not-exist");
+		ImageMagickImageConverter converter = new ImageMagickImageConverter(properties);
+		byte[] brokenJpeg = new byte[] { (byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0, 1, 2, 3, 4, 5, 6, 7, 8 };
+
+		assertThatThrownBy(() -> converter.toDisplayJpeg(brokenJpeg, DetectedImageType.JPEG))
+				.isInstanceOf(ImageConversionException.class)
+				.hasMessageContaining("dönüştürülemedi");
+	}
+
+	@Test
 	void heicWithoutMagickFailsFast() {
 		AppProperties properties = new AppProperties();
 		properties.getImageMagick().setCommand("magick-does-not-exist");

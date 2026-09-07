@@ -53,13 +53,13 @@ function statusLabel(item: QueueItem) {
   return item.error ?? 'Yüklenemedi'
 }
 
-async function runPool(ids: string[], worker: (id: string) => Promise<void>) {
+async function runPool<T>(items: T[], worker: (item: T) => Promise<void>) {
   let next = 0
-  const runners = Array.from({ length: Math.min(MAX_CONCURRENCY, ids.length) }, async () => {
-    while (next < ids.length) {
+  const runners = Array.from({ length: Math.min(MAX_CONCURRENCY, items.length) }, async () => {
+    while (next < items.length) {
       const current = next
       next += 1
-      await worker(ids[current])
+      await worker(items[current])
     }
   })
   await Promise.all(runners)
@@ -144,41 +144,39 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
     })
   }
 
-  async function uploadOne(id: string) {
-    let file: File | undefined
-    setQueue((current) => {
-      file = current.find((item) => item.id === id)?.file
-      return current.map((item) =>
-        item.id === id ? { ...item, status: 'UPLOADING', error: null } : item,
-      )
-    })
-    if (!file) return
+  async function uploadOne(item: QueueItem) {
+    const { id, file } = item
+    setQueue((current) =>
+      current.map((entry) =>
+        entry.id === id ? { ...entry, status: 'UPLOADING', error: null } : entry,
+      ),
+    )
 
     try {
       const photo = await uploadPhoto(file)
       prependPhotos([photo])
       setQueue((current) =>
-        current.map((item) => (item.id === id ? { ...item, status: 'SUCCESS', error: null } : item)),
+        current.map((entry) => (entry.id === id ? { ...entry, status: 'SUCCESS', error: null } : entry)),
       )
     } catch (cause) {
       const message = toUserMessage(cause)
       setQueue((current) =>
-        current.map((item) =>
-          item.id === id ? { ...item, status: 'FAILED', error: message } : item,
+        current.map((entry) =>
+          entry.id === id ? { ...entry, status: 'FAILED', error: message } : entry,
         ),
       )
     }
   }
 
-  async function uploadIds(ids: string[]) {
-    if (!ids.length) return
+  async function uploadIds(items: QueueItem[]) {
+    if (!items.length) return
     setBusy(true)
     setError(null)
     setDone(null)
-    await runPool(ids, uploadOne)
+    await runPool(items, uploadOne)
     setQueue((current) => {
-      const ok = current.filter((item) => item.status === 'SUCCESS').length
-      const failed = current.filter((item) => item.status === 'FAILED').length
+      const ok = current.filter((entry) => entry.status === 'SUCCESS').length
+      const failed = current.filter((entry) => entry.status === 'FAILED').length
       setInfo(`${ok} / ${current.length} fotoğraf yüklendi`)
       if (failed === 0 && ok > 0) {
         setDone('Fotoğraflarınız başarıyla eklendi')
@@ -206,12 +204,13 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
       setError(`${oversized.file.name} dosyası ${UPLOAD_LIMITS.maxFileSizeMb} MB sınırını aşıyor.`)
       return
     }
-    const pending = queue.filter((item) => item.status === 'WAITING' || item.status === 'FAILED')
-    await uploadIds(pending.map((item) => item.id))
+    const pending = queue.filter((item) => item.status !== 'SUCCESS')
+    await uploadIds(pending)
   }
 
   function retryOne(id: string) {
-    void uploadIds([id])
+    const item = queue.find((entry) => entry.id === id)
+    if (item) void uploadIds([item])
   }
 
   return (

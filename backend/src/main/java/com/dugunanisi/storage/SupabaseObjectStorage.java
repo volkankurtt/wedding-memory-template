@@ -1,5 +1,7 @@
 package com.dugunanisi.storage;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -10,6 +12,8 @@ import com.dugunanisi.config.AppProperties;
 
 @Component
 public class SupabaseObjectStorage implements ObjectStorage {
+
+	private static final Logger log = LoggerFactory.getLogger(SupabaseObjectStorage.class);
 
 	private final RestClient restClient;
 	private final AppProperties.Supabase supabase;
@@ -22,6 +26,8 @@ public class SupabaseObjectStorage implements ObjectStorage {
 	@Override
 	public void put(String objectPath, byte[] bytes, String contentType) {
 		assertConfigured();
+		long started = System.nanoTime();
+		log.info("Storage PUT start path={} bytes={} type={}", objectPath, bytes.length, contentType);
 		try {
 			restClient.put()
 					.uri(objectUri(objectPath))
@@ -32,11 +38,18 @@ public class SupabaseObjectStorage implements ObjectStorage {
 					.body(bytes)
 					.retrieve()
 					.toBodilessEntity();
+			log.info("Storage PUT done path={} ms={}", objectPath, elapsedMs(started));
 		}
 		catch (RestClientResponseException exception) {
+			log.warn("Storage PUT failed path={} status={} body={} ms={}",
+					objectPath,
+					exception.getStatusCode().value(),
+					exception.getResponseBodyAsString(),
+					elapsedMs(started));
 			throw new StorageException("Fotoğraf depolanamadı.", exception);
 		}
 		catch (RestClientException exception) {
+			log.warn("Storage PUT failed path={} ms={}: {}", objectPath, elapsedMs(started), exception.toString());
 			throw new StorageException("Fotoğraf depolanamadı.", exception);
 		}
 	}
@@ -71,6 +84,10 @@ public class SupabaseObjectStorage implements ObjectStorage {
 				|| supabase.getServiceRoleKey() == null || supabase.getServiceRoleKey().isBlank()) {
 			throw new StorageException("Depolama yapılandırılmadı.");
 		}
+	}
+
+	private static long elapsedMs(long startedNanos) {
+		return (System.nanoTime() - startedNanos) / 1_000_000L;
 	}
 
 	private String objectUri(String objectPath) {
