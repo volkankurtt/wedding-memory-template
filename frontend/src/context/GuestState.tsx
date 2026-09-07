@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { getMemories, getPhotos, PHOTO_PAGE_SIZE, toUserMessage } from '../api/client'
+import { markBackendReady } from '../api/backendReadyState'
 import type { Memory, Photo } from '../types'
 
 type GuestState = {
@@ -64,6 +65,7 @@ export function GuestStateProvider({ children }: { children: ReactNode }) {
       try {
         const items = await getMemories(abort.signal)
         if (abort.signal.aborted) return
+        markBackendReady()
         setMemories(items)
       } catch (error) {
         if (!abort.signal.aborted) setLoadError(toUserMessage(error))
@@ -93,6 +95,7 @@ export function GuestStateProvider({ children }: { children: ReactNode }) {
     try {
       const result = await getPhotos({ page, size: PHOTO_PAGE_SIZE })
       const items = result.photos
+      markBackendReady()
       setPhotos((current) => appendUnique(current, items))
       hasNextRef.current = result.hasNext
       nextPageRef.current = page + 1

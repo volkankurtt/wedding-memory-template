@@ -1,4 +1,5 @@
 import type { Memory, Photo } from '../types'
+import { markBackendReady } from './backendReadyState'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
@@ -125,6 +126,9 @@ export function uploadPhoto(file: File, uploadId?: string) {
   const body = new FormData()
   body.append('file', file)
   if (uploadId) body.append('uploadId', uploadId)
+  if (import.meta.env.DEV) {
+    console.info('[dugun-anisi] upload POST start', { uploadId, name: file.name, bytes: file.size })
+  }
   return request<Photo>('/api/photos', { method: 'POST', body })
 }
 
@@ -168,7 +172,10 @@ export async function waitForApi(options?: WaitForApiOptions) {
     const timer = setTimeout(() => controller.abort(), attemptMs)
     try {
       const health = await getHealth(controller.signal)
-      if (health.status === 'ok' || health.status === 'UP') return
+      if (health.status === 'ok' || health.status === 'UP') {
+        markBackendReady(now())
+        return
+      }
       lastError = new ApiError(503, networkMessage(), 'http')
     } catch (error) {
       lastError = error
@@ -189,10 +196,14 @@ export async function waitForApi(options?: WaitForApiOptions) {
 
 export async function uploadPhotoWithRetry(file: File, uploadId: string) {
   try {
-    return await uploadPhoto(file, uploadId)
+    const photo = await uploadPhoto(file, uploadId)
+    markBackendReady()
+    return photo
   } catch (error) {
     if (!isTransientUploadError(error)) throw error
-    return await uploadPhoto(file, uploadId)
+    const photo = await uploadPhoto(file, uploadId)
+    markBackendReady()
+    return photo
   }
 }
 

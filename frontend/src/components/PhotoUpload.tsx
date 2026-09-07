@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
-import { toUserMessage, uploadPhotoWithRetry, waitForApi } from '../api/client'
+import { toUserMessage, uploadPhotoWithRetry } from '../api/client'
+import { ensureBackendReady, isBackendReady } from '../api/backendReady'
 import { failedUploadItems, pendingUploadItems, runPhotoUploadSession } from '../api/photoUploadSession'
 import { ACCEPT_ATTR, UPLOAD_LIMITS } from '../config/limits'
 import { useGuestState } from '../context/GuestState'
@@ -176,14 +177,14 @@ export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = f
   async function uploadIds(items: QueueItem[]) {
     if (!items.length) return
     setBusy(true)
-    setPhase('warmup')
+    setPhase(isBackendReady() ? 'uploading' : 'warmup')
     setError(null)
     setDone(null)
     try {
       await runPhotoUploadSession({
         items,
         waitForApi: async () => {
-          await waitForApi()
+          await ensureBackendReady()
           setPhase('uploading')
         },
         upload: uploadOne,

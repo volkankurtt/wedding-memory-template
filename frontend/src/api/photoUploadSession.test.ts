@@ -1,8 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  BACKEND_READY_TTL_MS,
+  ensureBackendReady,
+  isBackendReady,
+  markBackendReady,
+  resetBackendReady,
+} from './backendReady'
 import { ApiError, isTransientUploadError, uploadPhotoWithRetry, waitForApi } from './client'
 import { failedUploadItems, pendingUploadItems, runPhotoUploadSession } from './photoUploadSession'
 
 afterEach(() => {
+  resetBackendReady()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -15,6 +23,18 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('waitForApi', () => {
+  it('returns on first successful health without sleeping', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ status: 'ok' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const sleep = vi.fn(async () => undefined)
+
+    await waitForApi({ timeoutMs: 90_000, retryDelayMs: 4_000, sleep, now: () => 0 })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(sleep).not.toHaveBeenCalled()
+    expect(isBackendReady(0)).toBe(true)
+  })
+
   it('retries cold-start health errors then continues', async () => {
     const fetchMock = vi
       .fn()
@@ -69,6 +89,7 @@ describe('uploadPhotoWithRetry', () => {
     await uploadPhotoWithRetry(new File([new Uint8Array([1, 2, 3])], 'a.jpg', { type: 'image/jpeg' }), 'upload-1')
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(isBackendReady()).toBe(true)
     const init = fetchMock.mock.calls[0][1] as RequestInit
     expect(init.method).toBe('POST')
     const body = init.body as FormData
@@ -126,6 +147,36 @@ describe('runPhotoUploadSession', () => {
     ]
     expect(pendingUploadItems(queue).map((item) => item.id)).toEqual(['bad', 'wait'])
     expect(failedUploadItems(queue).map((item) => item.id)).toEqual(['bad'])
+  })
+})
+
+describe('ensureBackendReady', () => {
+  it('skips health wait when backend was recently ready', async () => {
+    markBackendReady(1_000)
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await ensureBackendReady({ now: () => 1_000 + 30_000 })
+
+    expect(result).toBe('skipped')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('does a short health check after the ready ttl expires', async () => {
+    markBackendReady(1_000)
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ status: 'ok' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const sleep = vi.fn(async () => undefined)
+
+    const result = await ensureBackendReady({
+      now: () => 1_000 + BACKEND_READY_TTL_MS + 1,
+      sleep,
+    })
+
+    expect(result).toBe('waited')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/health')
+    expect(sleep).not.toHaveBeenCalled()
   })
 })
 
