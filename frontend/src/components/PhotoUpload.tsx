@@ -6,7 +6,7 @@ import { ACCEPT_ATTR, UPLOAD_LIMITS } from '../config/limits'
 import { useGuestState } from '../context/GuestState'
 import { IconCamera } from './Icons'
 
-type UploadStatus = 'WAITING' | 'UPLOADING' | 'SUCCESS' | 'FAILED'
+type UploadStatus = 'WAITING' | 'UPLOADING' | 'PREPARING' | 'SUCCESS' | 'FAILED'
 type UploadPhase = 'idle' | 'warmup' | 'uploading'
 
 type QueueItem = {
@@ -49,8 +49,9 @@ function formatSize(bytes: number) {
 
 function statusLabel(item: QueueItem) {
   if (item.status === 'WAITING') return 'Bekliyor'
-  if (item.status === 'UPLOADING') return 'Yükleniyor'
-  if (item.status === 'SUCCESS') return 'Yüklendi'
+  if (item.status === 'UPLOADING') return 'Fotoğraf yükleniyor...'
+  if (item.status === 'PREPARING') return 'Fotoğraf yüklendi, hazırlanıyor...'
+  if (item.status === 'SUCCESS') return 'Fotoğrafınız hazır.'
   return item.error ?? 'Yüklenemedi'
 }
 
@@ -159,7 +160,19 @@ export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = f
     )
 
     try {
-      const photo = await uploadPhotoWithRetry(file, id)
+      const photo = await uploadPhotoWithRetry(file, id, {
+        onPhase: (phase) => {
+          if (phase === 'preparing') {
+            setQueue((current) =>
+              current.map((entry) =>
+                entry.id === id && entry.status === 'UPLOADING'
+                  ? { ...entry, status: 'PREPARING', error: null }
+                  : entry,
+              ),
+            )
+          }
+        },
+      })
       prependPhotos([photo])
       setQueue((current) =>
         current.map((entry) => (entry.id === id ? { ...entry, status: 'SUCCESS', error: null } : entry)),

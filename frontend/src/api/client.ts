@@ -132,6 +132,114 @@ export function uploadPhoto(file: File, uploadId?: string) {
   return request<Photo>('/api/photos', { method: 'POST', body })
 }
 
+export type UploadSessionResponse = {
+  photoId: string
+  clientUploadId: string
+  path: string
+  signedUrl?: string | null
+  token?: string | null
+  expiresInSeconds: number
+  alreadyReady: boolean
+  needsUpload: boolean
+  photo?: Photo | null
+}
+
+export type UploadPhotoPhase = 'session' | 'storage' | 'preparing' | 'ready'
+
+export type UploadPhotoOptions = {
+  onPhase?: (phase: UploadPhotoPhase) => void
+}
+
+function createUploadSession(file: File, uploadId: string) {
+  return request<UploadSessionResponse>('/api/photos/upload-session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      clientUploadId: uploadId,
+      fileName: file.name,
+      contentType: file.type || 'application/octet-stream',
+      sizeBytes: file.size,
+    }),
+  })
+}
+
+function finalizePhoto(photoId: string, uploadId: string) {
+  return request<Photo>(`/api/photos/${photoId}/finalize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ clientUploadId: uploadId }),
+  })
+}
+
+async function putOriginalToStorage(file: File, signedUrl: string, token: string) {
+  const url = new URL(signedUrl)
+  url.searchParams.set('token', token)
+  const body = new FormData()
+  body.append('cacheControl', '3600')
+  body.append('', file)
+  let response: Response
+  try {
+    response = await fetch(url.toString(), {
+      method: 'PUT',
+      headers: {
+        'x-upsert': 'false',
+      },
+      body,
+    })
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new ApiError(0, timeoutMessage(), 'timeout')
+    }
+    throw new ApiError(0, networkMessage(), 'network')
+  }
+  if (response.ok || response.status === 409) return
+  // Same object already present from a previous attempt.
+  if (response.status === 400) {
+    const message = await readError(response)
+    if (/exist/i.test(message) || /already/i.test(message)) return
+    throw new ApiError(response.status, 'Fotoğraf depolanamadı. Lütfen tekrar deneyin.', 'http')
+  }
+  if (response.status === 502 || response.status === 503 || response.status === 504) {
+    throw new ApiError(response.status, await readError(response), 'http')
+  }
+  throw new ApiError(response.status, 'Fotoğraf depolanamadı. Lütfen tekrar deneyin.', 'http')
+}
+
+async function uploadPhotoDirect(file: File, uploadId: string, options?: UploadPhotoOptions) {
+  const sessionStarted = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  options?.onPhase?.('session')
+  const session = await createUploadSession(file, uploadId)
+  if (import.meta.env.DEV) {
+    console.info('[dugun-anisi] uploadSessionMs', {
+      uploadId,
+      ms: Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - sessionStarted),
+    })
+  }
+  if (session.alreadyReady && session.photo) {
+    options?.onPhase?.('ready')
+    return session.photo
+  }
+  if (session.needsUpload) {
+    if (!session.signedUrl || !session.token) {
+      throw new ApiError(500, 'Yükleme adresi üretilemedi. Lütfen tekrar deneyin.', 'http')
+    }
+    options?.onPhase?.('storage')
+    const storageStarted = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    await putOriginalToStorage(file, session.signedUrl, session.token)
+    if (import.meta.env.DEV) {
+      console.info('[dugun-anisi] directStorageUploadMs', {
+        uploadId,
+        ms: Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - storageStarted),
+        bytes: file.size,
+      })
+    }
+  }
+  options?.onPhase?.('preparing')
+  const photo = await finalizePhoto(session.photoId, uploadId)
+  options?.onPhase?.('ready')
+  return photo
+}
+
 export function isTransientUploadError(error: unknown) {
   if (!(error instanceof ApiError)) return false
   if (error.kind === 'network' || error.kind === 'timeout') return true
@@ -194,14 +302,14 @@ export async function waitForApi(options?: WaitForApiOptions) {
   throw new ApiError(0, networkMessage(), 'network')
 }
 
-export async function uploadPhotoWithRetry(file: File, uploadId: string) {
+export async function uploadPhotoWithRetry(file: File, uploadId: string, options?: UploadPhotoOptions) {
   try {
-    const photo = await uploadPhoto(file, uploadId)
+    const photo = await uploadPhotoDirect(file, uploadId, options)
     markBackendReady()
     return photo
   } catch (error) {
     if (!isTransientUploadError(error)) throw error
-    const photo = await uploadPhoto(file, uploadId)
+    const photo = await uploadPhotoDirect(file, uploadId, options)
     markBackendReady()
     return photo
   }

@@ -1,8 +1,10 @@
 package com.dugunanisi.api;
 
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -15,12 +17,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.dugunanisi.api.dto.CreateUploadSessionRequest;
 import com.dugunanisi.api.dto.PhotoPageResponse;
 import com.dugunanisi.api.dto.PhotoResponse;
+import com.dugunanisi.api.dto.UploadSessionResponse;
 import com.dugunanisi.service.PhotoService;
 import com.dugunanisi.support.TestImages;
 
@@ -78,5 +83,55 @@ class PhotoControllerTest {
 						new MockMultipartFile("file", "x.gif", "image/gif", TestImages.GIF)))
 				.andExpect(status().isUnsupportedMediaType())
 				.andExpect(jsonPath("$.error").value("Desteklenmeyen bir format. JPG, PNG, WEBP veya HEIC kullanın."));
+	}
+
+	@Test
+	void uploadSessionMapsToService() throws Exception {
+		UUID id = UUID.fromString("33333333-3333-3333-3333-333333333333");
+		when(photoService.createUploadSession(org.mockito.ArgumentMatchers.any(CreateUploadSessionRequest.class)))
+				.thenReturn(new UploadSessionResponse(
+						id,
+						"dddddddd-dddd-dddd-dddd-dddddddddddd",
+						id + "/original",
+						"https://example.supabase.co/sign",
+						"tok",
+						7200,
+						false,
+						true,
+						null));
+
+		mockMvc.perform(post("/api/photos/upload-session")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"clientUploadId":"dddddddd-dddd-dddd-dddd-dddddddddddd","fileName":"a.jpg","contentType":"image/jpeg","sizeBytes":12}
+								"""))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.photoId").value(id.toString()))
+				.andExpect(jsonPath("$.signedUrl").value("https://example.supabase.co/sign"))
+				.andExpect(jsonPath("$.token").value("tok"))
+				.andExpect(jsonPath("$.needsUpload").value(true));
+	}
+
+	@Test
+	void finalizeMapsToService() throws Exception {
+		UUID id = UUID.fromString("33333333-3333-3333-3333-333333333333");
+		String displayUrl = "https://example.supabase.co/storage/v1/object/public/guest-photos/" + id + "/display.jpg";
+		when(photoService.finalizeUpload(eq(id), eq("dddddddd-dddd-dddd-dddd-dddddddddddd")))
+				.thenReturn(new PhotoResponse(
+						id,
+						"a.jpg",
+						displayUrl,
+						displayUrl,
+						displayUrl.replace("display.jpg", "original"),
+						Instant.parse("2026-09-07T12:00:00Z")));
+
+		mockMvc.perform(post("/api/photos/" + id + "/finalize")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"clientUploadId":"dddddddd-dddd-dddd-dddd-dddddddddddd"}
+								"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.id").value(id.toString()))
+				.andExpect(jsonPath("$.displayUrl").value(displayUrl));
 	}
 }

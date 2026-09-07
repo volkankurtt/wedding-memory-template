@@ -56,6 +56,28 @@ class RateLimitFilterTest {
 		org.assertj.core.api.Assertions.assertThat(second.getStatus()).isEqualTo(200);
 	}
 
+	@Test
+	void photoSessionAndFinalizeShareTheSameLimit() throws Exception {
+		AppProperties properties = new AppProperties();
+		properties.getRateLimit().setPhotoUploadsPerWindow(1);
+		properties.getRateLimit().setWindow(Duration.ofMinutes(10));
+		RateLimitFilter filter = new RateLimitFilter(
+				new SlidingWindowRateLimiter(),
+				new ClientIpResolver(properties),
+				properties);
+
+		MockHttpServletRequest first = postRequest("/api/photos/upload-session", "10.1.1.2");
+		MockHttpServletResponse firstResponse = new MockHttpServletResponse();
+		filter.doFilter(first, firstResponse, new MockFilterChain());
+		org.assertj.core.api.Assertions.assertThat(firstResponse.getStatus()).isEqualTo(200);
+
+		MockHttpServletRequest second = postRequest(
+				"/api/photos/33333333-3333-3333-3333-333333333333/finalize", "10.1.1.2");
+		MockHttpServletResponse secondResponse = new MockHttpServletResponse();
+		filter.doFilter(second, secondResponse, new MockFilterChain());
+		org.assertj.core.api.Assertions.assertThat(secondResponse.getStatus()).isEqualTo(429);
+	}
+
 	private static MockHttpServletRequest postRequest(String path, String ip) {
 		MockHttpServletRequest request = new MockHttpServletRequest("POST", path);
 		request.setRemoteAddr(ip);

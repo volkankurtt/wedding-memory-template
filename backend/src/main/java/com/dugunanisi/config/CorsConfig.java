@@ -34,6 +34,7 @@ public class CorsConfig {
 
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
 		source.registerCorsConfiguration("/api/photos", guestWrite);
+		source.registerCorsConfiguration("/api/photos/**", guestWrite);
 		source.registerCorsConfiguration("/api/memories", guestWrite);
 		source.registerCorsConfiguration("/api/health", health);
 		return new CorsFilter(source);

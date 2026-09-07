@@ -60,7 +60,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 			return null;
 		}
 		String path = request.getRequestURI();
-		if ("/api/photos".equals(path)) {
+		if (isPhotoWrite(path)) {
 			return new LimitRule("photos", settings.getPhotoUploadsPerWindow(),
 					"Çok fazla fotoğraf yükleme denemesi. Lütfen biraz sonra tekrar deneyin.");
 		}
@@ -69,6 +69,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
 					"Çok fazla anı gönderildi. Lütfen biraz sonra tekrar deneyin.");
 		}
 		return null;
+	}
+
+	private static boolean isPhotoWrite(String path) {
+		if ("/api/photos".equals(path) || "/api/photos/upload-session".equals(path)) {
+			return true;
+		}
+		return path != null && path.matches("/api/photos/[0-9a-fA-F-]{36}/finalize");
 	}
 
 	private record LimitRule(String keyPrefix, int limit, String message) {

@@ -81,37 +81,91 @@ describe('waitForApi', () => {
 
 describe('uploadPhotoWithRetry', () => {
   it('uploads one jpeg when backend is ready', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      jsonResponse({ id: '1', fileName: 'a.jpg', fileUrl: '/display.jpg', createdAt: '2026-01-01T00:00:00Z' }, 201),
-    )
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      const path = String(url)
+      if (path.includes('/api/photos/upload-session')) {
+        return jsonResponse(
+          {
+            photoId: 'p1',
+            clientUploadId: 'upload-1',
+            path: 'p1/original',
+            signedUrl: 'https://storage.example/sign/p1',
+            token: 'tok',
+            expiresInSeconds: 7200,
+            alreadyReady: false,
+            needsUpload: true,
+          },
+          201,
+        )
+      }
+      if (path.includes('storage.example')) return new Response(null, { status: 200 })
+      if (path.includes('/api/photos/p1/finalize')) {
+        return jsonResponse(
+          { id: 'p1', fileName: 'a.jpg', fileUrl: '/display.jpg', createdAt: '2026-01-01T00:00:00Z' },
+          200,
+        )
+      }
+      return jsonResponse({ error: 'unexpected' }, 500)
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     await uploadPhotoWithRetry(new File([new Uint8Array([1, 2, 3])], 'a.jpg', { type: 'image/jpeg' }), 'upload-1')
 
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(isBackendReady()).toBe(true)
-    const init = fetchMock.mock.calls[0][1] as RequestInit
-    expect(init.method).toBe('POST')
-    const body = init.body as FormData
-    expect(body.get('uploadId')).toBe('upload-1')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/photos/upload-session')
+    const sessionInit = fetchMock.mock.calls[0][1]
+    expect(JSON.parse(String(sessionInit?.body))).toMatchObject({ clientUploadId: 'upload-1', fileName: 'a.jpg' })
+    expect(String(fetchMock.mock.calls[1][0])).toContain('https://storage.example/sign/p1')
+    expect(String(fetchMock.mock.calls[1][0])).toContain('token=tok')
+    expect(fetchMock.mock.calls[1][1]?.method).toBe('PUT')
+    const uploadHeaders = fetchMock.mock.calls[1][1]?.headers as Record<string, string>
+    expect(uploadHeaders['x-upsert']).toBe('false')
+    expect(uploadHeaders.Authorization).toBeUndefined()
+    expect(fetchMock.mock.calls[1][1]?.body).toBeInstanceOf(FormData)
+    expect(String(fetchMock.mock.calls[2][0])).toContain('/api/photos/p1/finalize')
   })
 
   it('retries a transient 502 once with the same upload id', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse({ error: 'bad gateway' }, 502))
-      .mockResolvedValueOnce(
-        jsonResponse({ id: '1', fileName: 'a.jpg', fileUrl: '/display.jpg', createdAt: '2026-01-01T00:00:00Z' }, 201),
-      )
+    let sessions = 0
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      const path = String(url)
+      if (path.includes('/api/photos/upload-session')) {
+        sessions += 1
+        if (sessions === 1) return jsonResponse({ error: 'bad gateway' }, 502)
+        return jsonResponse(
+          {
+            photoId: 'p1',
+            clientUploadId: 'same-id',
+            path: 'p1/original',
+            signedUrl: 'https://storage.example/sign/p1',
+            token: 'tok',
+            expiresInSeconds: 7200,
+            alreadyReady: false,
+            needsUpload: true,
+          },
+          201,
+        )
+      }
+      if (path.includes('storage.example')) return new Response(null, { status: 200 })
+      if (path.includes('/finalize')) {
+        return jsonResponse(
+          { id: 'p1', fileName: 'a.jpg', fileUrl: '/display.jpg', createdAt: '2026-01-01T00:00:00Z' },
+          200,
+        )
+      }
+      return jsonResponse({ error: 'unexpected' }, 500)
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     await uploadPhotoWithRetry(new File([new Uint8Array([1])], 'a.jpg', { type: 'image/jpeg' }), 'same-id')
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    const first = fetchMock.mock.calls[0][1] as RequestInit
-    const second = fetchMock.mock.calls[1][1] as RequestInit
-    expect((first.body as FormData).get('uploadId')).toBe('same-id')
-    expect((second.body as FormData).get('uploadId')).toBe('same-id')
+    const sessionBodies = fetchMock.mock.calls
+      .filter((call) => String(call[0]).includes('upload-session'))
+      .map((call) => JSON.parse(String(call[1]?.body)))
+    expect(sessionBodies).toHaveLength(2)
+    expect(sessionBodies[0].clientUploadId).toBe('same-id')
+    expect(sessionBodies[1].clientUploadId).toBe('same-id')
   })
 
   it('does not retry validation or rate-limit errors', async () => {
@@ -123,6 +177,98 @@ describe('uploadPhotoWithRetry', () => {
       ).rejects.toMatchObject({ status })
       expect(fetchMock).toHaveBeenCalledTimes(1)
     }
+  })
+
+  it('uploads three jpegs in parallel without duplicate session ids', async () => {
+    const seen = new Set<string>()
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = String(url)
+      if (path.includes('/api/photos/upload-session')) {
+        const body = JSON.parse(String(init?.body)) as { clientUploadId: string }
+        seen.add(body.clientUploadId)
+        return jsonResponse(
+          {
+            photoId: `p-${body.clientUploadId}`,
+            clientUploadId: body.clientUploadId,
+            path: `p-${body.clientUploadId}/original`,
+            signedUrl: `https://storage.example/sign/${body.clientUploadId}`,
+            token: 'tok',
+            expiresInSeconds: 7200,
+            alreadyReady: false,
+            needsUpload: true,
+          },
+          201,
+        )
+      }
+      if (path.includes('storage.example')) return new Response(null, { status: 200 })
+      if (path.includes('/finalize')) {
+        const id = path.split('/api/photos/')[1].split('/finalize')[0]
+        return jsonResponse({ id, fileName: 'a.jpg', fileUrl: '/display.jpg', createdAt: '2026-01-01T00:00:00Z' })
+      }
+      return jsonResponse({ error: 'unexpected' }, 500)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const file = () => new File([new Uint8Array([1])], 'a.jpg', { type: 'image/jpeg' })
+    await Promise.all([
+      uploadPhotoWithRetry(file(), '1'),
+      uploadPhotoWithRetry(file(), '2'),
+      uploadPhotoWithRetry(file(), '3'),
+    ])
+    expect([...seen].sort()).toEqual(['1', '2', '3'])
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes('upload-session'))).toHaveLength(3)
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes('storage.example'))).toHaveLength(3)
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes('/finalize'))).toHaveLength(3)
+  })
+
+  it('does not finalize when signed upload fails', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = String(url)
+      if (path.includes('/api/photos/upload-session')) {
+        return jsonResponse(
+          {
+            photoId: 'p1',
+            clientUploadId: 'id',
+            path: 'p1/original',
+            signedUrl: 'https://storage.example/sign/p1',
+            token: 'tok',
+            expiresInSeconds: 7200,
+            alreadyReady: false,
+            needsUpload: true,
+          },
+          201,
+        )
+      }
+      if (path.includes('storage.example')) return new Response('denied', { status: 403 })
+      return jsonResponse({ error: 'unexpected' }, 500)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(
+      uploadPhotoWithRetry(new File([new Uint8Array([1])], 'a.jpg', { type: 'image/jpeg' }), 'id'),
+    ).rejects.toMatchObject({ status: 403 })
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes('/finalize'))).toBe(false)
+  })
+
+  it('returns existing photo when session is already ready', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          photoId: 'p1',
+          clientUploadId: 'dup',
+          path: 'p1/original',
+          alreadyReady: true,
+          needsUpload: false,
+          photo: { id: 'p1', fileName: 'a.jpg', fileUrl: '/display.jpg', createdAt: '2026-01-01T00:00:00Z' },
+        },
+        201,
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const photo = await uploadPhotoWithRetry(
+      new File([new Uint8Array([1])], 'a.jpg', { type: 'image/jpeg' }),
+      'dup',
+    )
+    expect(photo.id).toBe('p1')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
 

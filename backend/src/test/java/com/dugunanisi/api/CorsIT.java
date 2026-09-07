@@ -31,6 +31,16 @@ class CorsIT {
 	}
 
 	@Test
+	void allowsConfiguredDevOriginForUploadSessionPreflight() throws Exception {
+		mockMvc.perform(options("/api/photos/upload-session")
+						.header("Origin", "http://localhost:5173")
+						.header("Access-Control-Request-Method", "POST")
+						.header("Access-Control-Request-Headers", "content-type"))
+				.andExpect(status().isOk())
+				.andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:5173"));
+	}
+
+	@Test
 	void rejectsUnknownOrigin() throws Exception {
 		mockMvc.perform(options("/api/photos")
 						.header("Origin", "https://evil.example")

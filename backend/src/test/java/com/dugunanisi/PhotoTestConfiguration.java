@@ -7,14 +7,13 @@ import org.springframework.context.annotation.Primary;
 import com.dugunanisi.image.FakeImageConverter;
 import com.dugunanisi.image.ImageConverter;
 import com.dugunanisi.storage.InMemoryObjectStorage;
-import com.dugunanisi.storage.ObjectStorage;
 
 @TestConfiguration
 public class PhotoTestConfiguration {
 
 	@Bean
 	@Primary
-	ObjectStorage objectStorage() {
+	InMemoryObjectStorage objectStorage() {
 		return new InMemoryObjectStorage();
 	}
 

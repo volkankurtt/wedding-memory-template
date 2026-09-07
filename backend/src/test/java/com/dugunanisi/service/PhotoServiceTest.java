@@ -11,6 +11,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -29,6 +30,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
 
 import com.dugunanisi.api.ApiException;
+import com.dugunanisi.api.dto.CreateUploadSessionRequest;
 import com.dugunanisi.config.AppProperties;
 import com.dugunanisi.domain.Photo;
 import com.dugunanisi.domain.PhotoRepository;
@@ -38,6 +40,7 @@ import com.dugunanisi.image.ImageConversionException;
 import com.dugunanisi.image.ImageConverter;
 import com.dugunanisi.image.ImageTypeDetector;
 import com.dugunanisi.storage.ObjectStorage;
+import com.dugunanisi.storage.SignedUpload;
 import com.dugunanisi.support.TestImages;
 
 @ExtendWith(MockitoExtension.class)
@@ -215,6 +218,138 @@ class PhotoServiceTest {
 		verify(photos).findByStatus(eq(PhotoStatus.READY), captor.capture());
 		assertThat(captor.getValue().getPageSize()).isEqualTo(PhotoService.MAX_PAGE_SIZE);
 		assertThat(captor.getValue().getPageNumber()).isEqualTo(0);
+	}
+
+	@Test
+	void createSessionIssuesSignedUrlForNewUpload() {
+		String uploadId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+		when(photos.findByClientUploadId(uploadId)).thenReturn(Optional.empty());
+		when(storage.createSignedUpload(anyString(), anyString(), any(Duration.class)))
+				.thenReturn(new SignedUpload("https://example.supabase.co/sign", "tok", 7200));
+
+		var response = service.createUploadSession(new CreateUploadSessionRequest(
+				uploadId, "masa.jpg", "image/jpeg", TestImages.JPEG.length));
+
+		assertThat(response.alreadyReady()).isFalse();
+		assertThat(response.needsUpload()).isTrue();
+		assertThat(response.signedUrl()).isEqualTo("https://example.supabase.co/sign");
+		assertThat(response.token()).isEqualTo("tok");
+		assertThat(response.expiresInSeconds()).isEqualTo(PhotoService.SIGNED_UPLOAD_TTL_SECONDS);
+		assertThat(response.path()).endsWith("/original");
+		verify(storage, never()).put(anyString(), any(), anyString());
+	}
+
+	@Test
+	void createSessionRejectsGifMime() {
+		assertThatThrownBy(() -> service.createUploadSession(new CreateUploadSessionRequest(
+				"dddddddd-dddd-dddd-dddd-dddddddddddd", "x.gif", "image/gif", 12)))
+				.isInstanceOf(ApiException.class)
+				.extracting(ex -> ((ApiException) ex).getStatus())
+				.isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+	}
+
+	@Test
+	void createSessionRejectsOversize() {
+		assertThatThrownBy(() -> service.createUploadSession(new CreateUploadSessionRequest(
+				"dddddddd-dddd-dddd-dddd-dddddddddddd",
+				"big.jpg",
+				"image/jpeg",
+				PhotoService.MAX_FILE_SIZE_BYTES + 1)))
+				.isInstanceOf(ApiException.class)
+				.extracting(ex -> ((ApiException) ex).getStatus())
+				.isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
+	}
+
+	@Test
+	void duplicateClientUploadIdReadyDoesNotCreateNewRow() {
+		String uploadId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+		Photo ready = readyPhoto("a.jpg", uploadId);
+		when(photos.findByClientUploadId(uploadId)).thenReturn(Optional.of(ready));
+
+		var first = service.createUploadSession(new CreateUploadSessionRequest(
+				uploadId, "a.jpg", "image/jpeg", 10));
+		var second = service.createUploadSession(new CreateUploadSessionRequest(
+				uploadId, "a.jpg", "image/jpeg", 10));
+
+		assertThat(first.photoId()).isEqualTo(ready.getId());
+		assertThat(second.photoId()).isEqualTo(ready.getId());
+		assertThat(first.alreadyReady()).isTrue();
+		assertThat(second.alreadyReady()).isTrue();
+		assertThat(first.needsUpload()).isFalse();
+		verify(storage, never()).createSignedUpload(anyString(), anyString(), any());
+		verify(photos, never()).save(any());
+	}
+
+	@Test
+	void pendingSessionReissuesSignedUrlWhenOriginalMissing() {
+		String uploadId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+		UUID id = UUID.randomUUID();
+		Photo pending = new Photo(id, "a.jpg", "image/jpeg", 10, id + "/original", uploadId);
+		when(photos.findByClientUploadId(uploadId)).thenReturn(Optional.of(pending));
+		when(storage.exists(id + "/original")).thenReturn(false);
+		when(storage.createSignedUpload(anyString(), anyString(), any(Duration.class)))
+				.thenReturn(new SignedUpload("https://example.supabase.co/sign-1", "t1", 7200))
+				.thenReturn(new SignedUpload("https://example.supabase.co/sign-2", "t2", 7200));
+
+		var first = service.createUploadSession(new CreateUploadSessionRequest(
+				uploadId, "a.jpg", "image/jpeg", 10));
+		var second = service.createUploadSession(new CreateUploadSessionRequest(
+				uploadId, "a.jpg", "image/jpeg", 10));
+
+		assertThat(first.photoId()).isEqualTo(id);
+		assertThat(second.photoId()).isEqualTo(id);
+		assertThat(first.token()).isEqualTo("t1");
+		assertThat(second.token()).isEqualTo("t2");
+		verify(storage, times(2)).createSignedUpload(anyString(), anyString(), any());
+	}
+
+	@Test
+	void finalizeMissingObjectReturns400() {
+		UUID id = UUID.randomUUID();
+		String uploadId = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+		Photo pending = new Photo(id, "a.jpg", "image/jpeg", 10, id + "/original", uploadId);
+		when(photos.findById(id)).thenReturn(Optional.of(pending));
+		when(storage.exists(id + "/original")).thenReturn(false);
+
+		assertThatThrownBy(() -> service.finalizeUpload(id, uploadId))
+				.isInstanceOf(ApiException.class)
+				.extracting(ex -> ((ApiException) ex).getStatus())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		verify(storage, never()).put(anyString(), any(), anyString());
+	}
+
+	@Test
+	void finalizeSuccessWritesDisplayOnly() {
+		UUID id = UUID.randomUUID();
+		String uploadId = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+		Photo pending = new Photo(id, "a.jpg", "image/jpeg", TestImages.JPEG.length, id + "/original", uploadId);
+		when(photos.findById(id)).thenReturn(Optional.of(pending));
+		when(storage.exists(id + "/original")).thenReturn(true);
+		when(storage.get(id + "/original")).thenReturn(TestImages.JPEG);
+		when(converter.toDisplayJpeg(eq(TestImages.JPEG), eq(DetectedImageType.JPEG), any()))
+				.thenReturn(TestImages.JPEG);
+
+		var response = service.finalizeUpload(id, uploadId);
+
+		assertThat(response.id()).isEqualTo(id);
+		assertThat(response.displayUrl()).endsWith("/display.jpg");
+		assertThat(response.originalUrl()).endsWith("/original");
+		verify(storage, never()).put(eq(id + "/original"), any(), anyString());
+		verify(storage).put(eq(id + "/display.jpg"), eq(TestImages.JPEG), eq("image/jpeg"));
+	}
+
+	@Test
+	void finalizeReadyIsIdempotent() {
+		String uploadId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+		Photo ready = readyPhoto("a.jpg", uploadId);
+		when(photos.findById(ready.getId())).thenReturn(Optional.of(ready));
+
+		var response = service.finalizeUpload(ready.getId(), uploadId);
+
+		assertThat(response.id()).isEqualTo(ready.getId());
+		verify(storage, never()).get(anyString());
+		verify(storage, never()).put(anyString(), any(), anyString());
+		verify(converter, never()).toDisplayJpeg(any(), any(), any());
 	}
 
 	private static Photo readyPhoto(String fileName) {

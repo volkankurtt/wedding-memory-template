@@ -2,6 +2,7 @@ package com.dugunanisi.service;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -18,8 +19,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.dugunanisi.api.ApiException;
+import com.dugunanisi.api.dto.CreateUploadSessionRequest;
 import com.dugunanisi.api.dto.PhotoPageResponse;
 import com.dugunanisi.api.dto.PhotoResponse;
+import com.dugunanisi.api.dto.UploadSessionResponse;
 import com.dugunanisi.config.AppProperties;
 import com.dugunanisi.domain.Photo;
 import com.dugunanisi.domain.PhotoRepository;
@@ -29,6 +32,7 @@ import com.dugunanisi.image.ImageConversionException;
 import com.dugunanisi.image.ImageConverter;
 import com.dugunanisi.image.ImageTypeDetector;
 import com.dugunanisi.storage.ObjectStorage;
+import com.dugunanisi.storage.SignedUpload;
 import com.dugunanisi.storage.StorageException;
 
 @Service
@@ -37,6 +41,8 @@ public class PhotoService {
 	public static final long MAX_FILE_SIZE_BYTES = 25L * 1024 * 1024;
 	public static final int DEFAULT_PAGE_SIZE = 30;
 	public static final int MAX_PAGE_SIZE = 60;
+	/** Supabase signed upload tokens last 2 hours; expiry is not configurable. */
+	public static final int SIGNED_UPLOAD_TTL_SECONDS = 2 * 60 * 60;
 	private static final Logger log = LoggerFactory.getLogger(PhotoService.class);
 
 	private final PhotoRepository photos;
@@ -139,18 +145,165 @@ public class PhotoService {
 			}
 			return storeAndComplete(raced, bytes, type, started);
 		}
-		return storeAndComplete(photo, bytes, type, started);
+		return storeAndComplete(photo, bytes, type, started, true);
+	}
+
+	@Transactional
+	public UploadSessionResponse createUploadSession(CreateUploadSessionRequest request) {
+		if (request == null) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "Yükleme isteği işlenemedi.");
+		}
+		String uploadKey = parseUploadId(request.clientUploadId());
+		if (uploadKey == null) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "Yükleme isteği işlenemedi.");
+		}
+		if (request.sizeBytes() <= 0) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "Lütfen bir fotoğraf seçin.");
+		}
+		if (request.sizeBytes() > MAX_FILE_SIZE_BYTES) {
+			throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE, "Dosya 25 MB sınırını aşıyor.");
+		}
+		if (!detector.isAllowedMime(request.contentType())) {
+			throw unsupportedType();
+		}
+
+		Optional<Photo> existing = photos.findByClientUploadId(uploadKey);
+		if (existing.isPresent()) {
+			return sessionForExisting(existing.get(), uploadKey);
+		}
+
+		UUID id = UUID.randomUUID();
+		String originalPath = id + "/original";
+		String fileName = safeFileName(request.fileName());
+		String contentType = request.contentType() == null || request.contentType().isBlank()
+				? "application/octet-stream"
+				: request.contentType();
+		Photo photo;
+		try {
+			photo = photos.save(new Photo(id, fileName, contentType, request.sizeBytes(), originalPath, uploadKey));
+		}
+		catch (DataIntegrityViolationException exception) {
+			Photo raced = photos.findByClientUploadId(uploadKey).orElseThrow(() -> exception);
+			return sessionForExisting(raced, uploadKey);
+		}
+		return signedSession(photo, uploadKey);
+	}
+
+	@Transactional
+	public PhotoResponse finalizeUpload(UUID photoId, String clientUploadId) {
+		long started = System.nanoTime();
+		String uploadKey = parseUploadId(clientUploadId);
+		if (uploadKey == null) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "Yükleme isteği işlenemedi.");
+		}
+		Photo photo = photos.findById(photoId)
+				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Fotoğraf bulunamadı."));
+		if (photo.getClientUploadId() == null || !uploadKey.equals(photo.getClientUploadId())) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "Yükleme isteği işlenemedi.");
+		}
+		if (photo.getStatus() == PhotoStatus.READY) {
+			log.info("Idempotent finalize replay id={} uploadId={}", photo.getId(), uploadKey);
+			return PhotoResponse.from(photo);
+		}
+
+		String originalPath = photo.getStoragePath();
+		if (!storage.exists(originalPath)) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "Fotoğraf henüz yüklenmedi. Lütfen tekrar deneyin.");
+		}
+		byte[] bytes;
+		try {
+			bytes = storage.get(originalPath);
+		}
+		catch (StorageException exception) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "Fotoğraf henüz yüklenmedi. Lütfen tekrar deneyin.");
+		}
+		if (bytes.length > MAX_FILE_SIZE_BYTES) {
+			throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE, "Dosya 25 MB sınırını aşıyor.");
+		}
+		DetectedImageType type = detector.detect(bytes);
+		if (type == null) {
+			photo.markFailed();
+			photos.save(photo);
+			throw unsupportedType();
+		}
+		return storeAndComplete(photo, bytes, type, started, false);
+	}
+
+	private UploadSessionResponse sessionForExisting(Photo photo, String uploadKey) {
+		if (photo.getStatus() == PhotoStatus.READY) {
+			log.info("Idempotent session replay id={} uploadId={}", photo.getId(), uploadKey);
+			return new UploadSessionResponse(
+					photo.getId(),
+					uploadKey,
+					photo.getStoragePath(),
+					null,
+					null,
+					SIGNED_UPLOAD_TTL_SECONDS,
+					true,
+					false,
+					PhotoResponse.from(photo));
+		}
+		boolean needsUpload = !storage.exists(photo.getStoragePath());
+		if (!needsUpload) {
+			return new UploadSessionResponse(
+					photo.getId(),
+					uploadKey,
+					photo.getStoragePath(),
+					null,
+					null,
+					SIGNED_UPLOAD_TTL_SECONDS,
+					false,
+					false,
+					null);
+		}
+		return signedSession(photo, uploadKey);
+	}
+
+	private UploadSessionResponse signedSession(Photo photo, String uploadKey) {
+		try {
+			SignedUpload signed = storage.createSignedUpload(
+					photo.getStoragePath(),
+					photo.getContentType(),
+					Duration.ofSeconds(SIGNED_UPLOAD_TTL_SECONDS));
+			return new UploadSessionResponse(
+					photo.getId(),
+					uploadKey,
+					photo.getStoragePath(),
+					signed.signedUrl(),
+					signed.token(),
+					signed.expiresInSeconds(),
+					false,
+					true,
+					null);
+		}
+		catch (StorageException exception) {
+			throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "Yükleme adresi üretilemedi. Lütfen tekrar deneyin.");
+		}
 	}
 
 	private PhotoResponse storeAndComplete(Photo photo, byte[] bytes, DetectedImageType type, long started) {
+		return storeAndComplete(photo, bytes, type, started, true);
+	}
+
+	private PhotoResponse storeAndComplete(
+			Photo photo,
+			byte[] bytes,
+			DetectedImageType type,
+			long started,
+			boolean storeOriginal) {
 		UUID id = photo.getId();
 		String originalPath = photo.getStoragePath();
 		String displayPath = id + "/display.jpg";
 		try {
-			log.info("Uploading original to storage path={}", originalPath);
-			long originalStarted = System.nanoTime();
-			storage.put(originalPath, bytes, type.contentType());
-			log.info("Original stored id={} ms={} sinceStartMs={}", id, elapsedMs(originalStarted), elapsedMs(started));
+			if (storeOriginal) {
+				log.info("Uploading original to storage path={}", originalPath);
+				long originalStarted = System.nanoTime();
+				storage.put(originalPath, bytes, type.contentType());
+				log.info("Original stored id={} ms={} sinceStartMs={}", id, elapsedMs(originalStarted), elapsedMs(started));
+			}
+			else {
+				log.info("Finalize using stored original path={} bytes={}", originalPath, bytes.length);
+			}
 			long convertStarted = System.nanoTime();
 			byte[] displayJpeg = converter.toDisplayJpeg(bytes, type, photo.getOriginalFileName());
 			log.info("Display generated id={} file={} contentType={} ms={} sinceStartMs={} bytes={} path={}",
