@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { toUserMessage, uploadPhotoWithRetry } from '../api/client'
 import { ensureBackendReady, isBackendReady } from '../api/backendReady'
-import { failedUploadItems, pendingUploadItems, runPhotoUploadSession } from '../api/photoUploadSession'
+import {
+  canViewUploadedPhotos,
+  failedUploadItems,
+  pendingUploadItems,
+  runPhotoUploadSession,
+} from '../api/photoUploadSession'
 import { ACCEPT_ATTR, UPLOAD_LIMITS } from '../config/limits'
 import { useGuestState } from '../context/GuestState'
-import { IconCamera } from './Icons'
+import { IconCamera, IconCheck, IconGallery } from './Icons'
 
 type UploadStatus = 'WAITING' | 'UPLOADING' | 'PREPARING' | 'SUCCESS' | 'FAILED'
 type UploadPhase = 'idle' | 'warmup' | 'uploading'
@@ -63,6 +69,7 @@ type Props = {
 }
 
 export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = false }: Props) {
+  const navigate = useNavigate()
   const { prependPhotos } = useGuestState()
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -73,6 +80,9 @@ export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = f
 
   const selected = pendingUploadItems(queue)
   const successCount = queue.filter((item) => item.status === 'SUCCESS').length
+  const failedCount = queue.filter((item) => item.status === 'FAILED').length
+  const showGalleryCta = canViewUploadedPhotos(queue, busy)
+  const allSucceeded = showGalleryCta && failedCount === 0
   const countLabel = useMemo(
     () => `${queue.length} / ${UPLOAD_LIMITS.maxFilesPerRequest} fotoğraf seçildi`,
     [queue.length],
@@ -220,8 +230,9 @@ export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = f
       const failed = current.filter((entry) => entry.status === 'FAILED').length
       setInfo(`${ok} / ${current.length} fotoğraf yüklendi`)
       if (failed === 0 && ok > 0) {
-        setDone('Fotoğraflarınız başarıyla yüklendi.')
-        window.setTimeout(() => onDone?.(), 1200)
+        setDone('Fotoğraflar başarıyla yüklendi!')
+      } else if (failed > 0 && ok > 0) {
+        setDone(`${current.length} fotoğraftan ${ok}'si yüklendi.`)
       } else if (failed > 0) {
         setError('Bazı fotoğraflar yüklenemedi. Tekrar deneyebilirsiniz.')
       }
@@ -252,6 +263,11 @@ export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = f
   function retryOne(id: string) {
     const item = failedUploadItems(queue).find((entry) => entry.id === id)
     if (item) void uploadIds([item])
+  }
+
+  function goToGallery() {
+    onDone?.()
+    navigate('/gallery')
   }
 
   return (
@@ -327,11 +343,24 @@ export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = f
             <p className="form-note">Yükleme devam ediyor. Lütfen pencereyi kapatmadan bekleyin.</p>
           ) : null}
         </>
-      ) : info && !error ? (
+      ) : info && !error && !showGalleryCta ? (
         <p className="form-note">{info}</p>
       ) : null}
       {error ? <p className="form-error">{error}</p> : null}
-      {!busy && done ? <p className="form-note">{done}</p> : null}
+      {showGalleryCta ? (
+        <div className="upload-success">
+          <p className="form-note form-note--icon upload-success__title">
+            <IconCheck size={18} />
+            {allSucceeded ? 'Fotoğraflar başarıyla yüklendi!' : done}
+          </p>
+          <button className="btn btn--warm" type="button" onClick={goToGallery}>
+            <IconGallery className="btn-ico" size={18} />
+            Anıları Gör
+          </button>
+        </div>
+      ) : !busy && done ? (
+        <p className="form-note">{done}</p>
+      ) : null}
     </form>
   )
 }

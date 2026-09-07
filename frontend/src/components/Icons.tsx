@@ -77,6 +77,15 @@ export function IconDownload({ size = 16, className }: IconProps) {
   )
 }
 
+export function IconCheck({ size = 16, className }: IconProps) {
+  return (
+    <Svg size={size} className={className}>
+      <circle {...stroke} cx="12" cy="12" r="8.2" />
+      <path {...stroke} d="m8.4 12.2 2.4 2.4 4.8-5.1" />
+    </Svg>
+  )
+}
+
 export function IconArrowLeft({ size = 16, className }: IconProps) {
   return (
     <Svg size={size} className={className}>

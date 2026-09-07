@@ -7,7 +7,12 @@ import {
   resetBackendReady,
 } from './backendReady'
 import { ApiError, isTransientUploadError, uploadPhotoWithRetry, waitForApi } from './client'
-import { failedUploadItems, pendingUploadItems, runPhotoUploadSession } from './photoUploadSession'
+import {
+  canViewUploadedPhotos,
+  failedUploadItems,
+  pendingUploadItems,
+  runPhotoUploadSession,
+} from './photoUploadSession'
 
 afterEach(() => {
   resetBackendReady()
@@ -293,6 +298,19 @@ describe('runPhotoUploadSession', () => {
     ]
     expect(pendingUploadItems(queue).map((item) => item.id)).toEqual(['bad', 'wait'])
     expect(failedUploadItems(queue).map((item) => item.id)).toEqual(['bad'])
+  })
+
+  it('shows gallery cta only when uploads finished with at least one success', () => {
+    const mixed = [
+      { id: 'ok', status: 'SUCCESS' },
+      { id: 'bad', status: 'FAILED' },
+    ]
+    expect(canViewUploadedPhotos(mixed, false)).toBe(true)
+    expect(canViewUploadedPhotos(mixed, true)).toBe(false)
+    expect(canViewUploadedPhotos([{ id: 'a', status: 'SUCCESS' }], false)).toBe(true)
+    expect(canViewUploadedPhotos([{ id: 'a', status: 'FAILED' }], false)).toBe(false)
+    expect(canViewUploadedPhotos([{ id: 'a', status: 'UPLOADING' }], false)).toBe(false)
+    expect(canViewUploadedPhotos([], false)).toBe(false)
   })
 })
 
