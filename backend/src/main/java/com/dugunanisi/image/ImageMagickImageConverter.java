@@ -43,7 +43,7 @@ public class ImageMagickImageConverter implements ImageConverter {
 	public byte[] toDisplayJpeg(byte[] original, DetectedImageType type) {
 		if (type == DetectedImageType.JPEG || type == DetectedImageType.PNG || type == DetectedImageType.WEBP) {
 			try {
-				byte[] jpeg = resizeWithImageIo(original);
+				byte[] jpeg = resizeWithImageIo(original, type);
 				log.info("ImageIO display jpeg ready type={} bytes={}", type, jpeg.length);
 				return jpeg;
 			}
@@ -112,10 +112,13 @@ public class ImageMagickImageConverter implements ImageConverter {
 		}
 	}
 
-	static byte[] resizeWithImageIo(byte[] original) throws IOException {
+	static byte[] resizeWithImageIo(byte[] original, DetectedImageType type) throws IOException {
 		BufferedImage source = ImageIO.read(new ByteArrayInputStream(original));
 		if (source == null) {
 			throw new IOException("ImageIO could not read image");
+		}
+		if (type == DetectedImageType.JPEG) {
+			source = applyExifOrientation(source, JpegExifOrientation.read(original));
 		}
 		int width = source.getWidth();
 		int height = source.getHeight();
@@ -139,6 +142,89 @@ public class ImageMagickImageConverter implements ImageConverter {
 			graphics.dispose();
 		}
 		return writeJpeg(rgb);
+	}
+
+	static BufferedImage applyExifOrientation(BufferedImage source, int orientation) {
+		return switch (orientation) {
+			case 2 -> flipHorizontal(source);
+			case 3 -> rotate180(source);
+			case 4 -> flipVertical(source);
+			case 5 -> rotate90CounterClockwise(flipHorizontal(source));
+			case 6 -> rotate90Clockwise(source);
+			case 7 -> rotate90Clockwise(flipHorizontal(source));
+			case 8 -> rotate90CounterClockwise(source);
+			default -> source;
+		};
+	}
+
+	private static BufferedImage rotate90Clockwise(BufferedImage source) {
+		BufferedImage dest = new BufferedImage(source.getHeight(), source.getWidth(), BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = dest.createGraphics();
+		try {
+			graphics.translate(source.getHeight(), 0);
+			graphics.rotate(Math.PI / 2);
+			graphics.drawImage(source, 0, 0, null);
+		}
+		finally {
+			graphics.dispose();
+		}
+		return dest;
+	}
+
+	private static BufferedImage rotate90CounterClockwise(BufferedImage source) {
+		BufferedImage dest = new BufferedImage(source.getHeight(), source.getWidth(), BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = dest.createGraphics();
+		try {
+			graphics.translate(0, source.getWidth());
+			graphics.rotate(-Math.PI / 2);
+			graphics.drawImage(source, 0, 0, null);
+		}
+		finally {
+			graphics.dispose();
+		}
+		return dest;
+	}
+
+	private static BufferedImage rotate180(BufferedImage source) {
+		BufferedImage dest = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = dest.createGraphics();
+		try {
+			graphics.translate(source.getWidth(), source.getHeight());
+			graphics.rotate(Math.PI);
+			graphics.drawImage(source, 0, 0, null);
+		}
+		finally {
+			graphics.dispose();
+		}
+		return dest;
+	}
+
+	private static BufferedImage flipHorizontal(BufferedImage source) {
+		BufferedImage dest = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = dest.createGraphics();
+		try {
+			graphics.translate(source.getWidth(), 0);
+			graphics.scale(-1, 1);
+			graphics.drawImage(source, 0, 0, null);
+		}
+		finally {
+			graphics.dispose();
+		}
+		return dest;
+	}
+
+	private static BufferedImage flipVertical(BufferedImage source) {
+		BufferedImage dest = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+		Graphics2D graphics = dest.createGraphics();
+		try {
+			graphics.translate(0, source.getHeight());
+			graphics.scale(1, -1);
+			graphics.drawImage(source, 0, 0, null);
+		}
+		finally {
+			graphics.dispose();
+		}
+		return dest;
 	}
 
 	private static byte[] writeJpeg(BufferedImage image) throws IOException {

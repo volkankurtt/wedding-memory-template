@@ -3,6 +3,13 @@ package com.dugunanisi.image;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+
+import javax.imageio.ImageIO;
+
 import org.junit.jupiter.api.Test;
 
 import com.dugunanisi.config.AppProperties;
@@ -12,36 +19,134 @@ class ImageMagickImageConverterTest {
 
 	@Test
 	void jpegIsConvertedWithImageIoWithoutMagick() {
-		AppProperties properties = new AppProperties();
-		properties.getImageMagick().setCommand("magick-does-not-exist");
-		ImageMagickImageConverter converter = new ImageMagickImageConverter(properties);
-
-		byte[] jpeg = converter.toDisplayJpeg(TestImages.JPEG, DetectedImageType.JPEG);
+		byte[] jpeg = converter().toDisplayJpeg(TestImages.JPEG, DetectedImageType.JPEG);
 
 		assertThat(jpeg[0]).isEqualTo((byte) 0xFF);
 		assertThat(jpeg[1]).isEqualTo((byte) 0xD8);
 	}
 
 	@Test
+	void orientation6JpegBecomesPortraitInCorrectDirection() throws Exception {
+		byte[] original = OrientedJpegs.withOrientation(OrientedJpegs.solidHalves(64, 32), 6, true);
+		BufferedImage stored = OrientedJpegs.read(original);
+		assertThat(stored.getWidth()).isEqualTo(64);
+		assertThat(stored.getHeight()).isEqualTo(32);
+
+		byte[] display = converter().toDisplayJpeg(original, DetectedImageType.JPEG);
+		BufferedImage image = OrientedJpegs.read(display);
+
+		assertThat(image.getWidth()).isEqualTo(32);
+		assertThat(image.getHeight()).isEqualTo(64);
+		assertThat(OrientedJpegs.reddish(sample(image, 0.5, 0.25))).isTrue();
+		assertThat(OrientedJpegs.bluish(sample(image, 0.5, 0.75))).isTrue();
+		assertThat(JpegExifOrientation.read(display)).isEqualTo(1);
+	}
+
+	@Test
+	void orientation8JpegRotatesCounterClockwise() throws Exception {
+		byte[] original = OrientedJpegs.withOrientation(OrientedJpegs.solidHalves(64, 32), 8, false);
+
+		byte[] display = converter().toDisplayJpeg(original, DetectedImageType.JPEG);
+		BufferedImage image = OrientedJpegs.read(display);
+
+		assertThat(image.getWidth()).isEqualTo(32);
+		assertThat(image.getHeight()).isEqualTo(64);
+		assertThat(OrientedJpegs.bluish(sample(image, 0.5, 0.25))).isTrue();
+		assertThat(OrientedJpegs.reddish(sample(image, 0.5, 0.75))).isTrue();
+	}
+
+	@Test
+	void orientation2JpegIsFlippedHorizontally() throws Exception {
+		byte[] original = OrientedJpegs.withOrientation(OrientedJpegs.solidHalves(64, 32), 2, true);
+
+		byte[] display = converter().toDisplayJpeg(original, DetectedImageType.JPEG);
+		BufferedImage image = OrientedJpegs.read(display);
+
+		assertThat(image.getWidth()).isEqualTo(64);
+		assertThat(image.getHeight()).isEqualTo(32);
+		assertThat(OrientedJpegs.bluish(sample(image, 0.25, 0.5))).isTrue();
+		assertThat(OrientedJpegs.reddish(sample(image, 0.75, 0.5))).isTrue();
+	}
+
+	@Test
+	void normalJpegKeepsPixelOrientation() throws Exception {
+		byte[] original = OrientedJpegs.solidHalves(64, 32);
+
+		byte[] display = converter().toDisplayJpeg(original, DetectedImageType.JPEG);
+		BufferedImage image = OrientedJpegs.read(display);
+
+		assertThat(image.getWidth()).isEqualTo(64);
+		assertThat(image.getHeight()).isEqualTo(32);
+		assertThat(OrientedJpegs.reddish(sample(image, 0.25, 0.5))).isTrue();
+		assertThat(OrientedJpegs.bluish(sample(image, 0.75, 0.5))).isTrue();
+	}
+
+	@Test
+	void orientationIsAppliedBeforeLongEdgeResize() throws Exception {
+		byte[] original = OrientedJpegs.withOrientation(OrientedJpegs.solidHalves(2000, 1000), 6, true);
+
+		byte[] display = converter().toDisplayJpeg(original, DetectedImageType.JPEG);
+		BufferedImage image = OrientedJpegs.read(display);
+
+		assertThat(image.getWidth()).isEqualTo(960);
+		assertThat(image.getHeight()).isEqualTo(1920);
+		assertThat(OrientedJpegs.reddish(sample(image, 0.5, 0.25))).isTrue();
+		assertThat(OrientedJpegs.bluish(sample(image, 0.5, 0.75))).isTrue();
+	}
+
+	@Test
+	void pngIsNotRotatedByJpegExifRules() throws Exception {
+		byte[] display = converter().toDisplayJpeg(pngHalves(40, 20), DetectedImageType.PNG);
+		BufferedImage image = OrientedJpegs.read(display);
+
+		assertThat(image.getWidth()).isEqualTo(40);
+		assertThat(image.getHeight()).isEqualTo(20);
+		assertThat(OrientedJpegs.reddish(sample(image, 0.25, 0.5))).isTrue();
+		assertThat(OrientedJpegs.bluish(sample(image, 0.75, 0.5))).isTrue();
+	}
+
+	@Test
 	void unreadableJpegFailsFastWithoutMagick() {
-		AppProperties properties = new AppProperties();
-		properties.getImageMagick().setCommand("magick-does-not-exist");
-		ImageMagickImageConverter converter = new ImageMagickImageConverter(properties);
 		byte[] brokenJpeg = new byte[] { (byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0, 1, 2, 3, 4, 5, 6, 7, 8 };
 
-		assertThatThrownBy(() -> converter.toDisplayJpeg(brokenJpeg, DetectedImageType.JPEG))
+		assertThatThrownBy(() -> converter().toDisplayJpeg(brokenJpeg, DetectedImageType.JPEG))
 				.isInstanceOf(ImageConversionException.class)
 				.hasMessageContaining("dönüştürülemedi");
 	}
 
 	@Test
 	void heicWithoutMagickFailsFast() {
-		AppProperties properties = new AppProperties();
-		properties.getImageMagick().setCommand("magick-does-not-exist");
-		ImageMagickImageConverter converter = new ImageMagickImageConverter(properties);
-
-		assertThatThrownBy(() -> converter.toDisplayJpeg(TestImages.heicHeader(), DetectedImageType.HEIC))
+		assertThatThrownBy(() -> converter().toDisplayJpeg(TestImages.heicHeader(), DetectedImageType.HEIC))
 				.isInstanceOf(ImageConversionException.class)
 				.hasMessageContaining("ImageMagick");
+	}
+
+	private static ImageMagickImageConverter converter() {
+		AppProperties properties = new AppProperties();
+		properties.getImageMagick().setCommand("magick-does-not-exist");
+		return new ImageMagickImageConverter(properties);
+	}
+
+	private static int sample(BufferedImage image, double xRatio, double yRatio) {
+		int x = Math.min(image.getWidth() - 1, Math.max(0, (int) Math.round((image.getWidth() - 1) * xRatio)));
+		int y = Math.min(image.getHeight() - 1, Math.max(0, (int) Math.round((image.getHeight() - 1) * yRatio)));
+		return image.getRGB(x, y);
+	}
+
+	private static byte[] pngHalves(int width, int height) throws Exception {
+		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+		Graphics2D graphics = image.createGraphics();
+		try {
+			graphics.setColor(Color.RED);
+			graphics.fillRect(0, 0, width / 2, height);
+			graphics.setColor(Color.BLUE);
+			graphics.fillRect(width / 2, 0, width - width / 2, height);
+		}
+		finally {
+			graphics.dispose();
+		}
+		ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+		ImageIO.write(image, "png", buffer);
+		return buffer.toByteArray();
 	}
 }
