@@ -1,6 +1,6 @@
 import type { Memory, Photo } from '../types'
 
-const API_BASE = '/api'
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
 export class ApiError extends Error {
   readonly status: number
@@ -36,7 +36,7 @@ async function readError(response: Response): Promise<string> {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
-    response = await fetch(`${API_BASE}${path}`, init)
+    response = await fetch(`${API_BASE_URL}${path}`, init)
   } catch (error) {
     if (init?.signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
       throw error
@@ -98,22 +98,22 @@ export async function getPhotos(options?: { page?: number; size?: number; signal
   const page = options?.page ?? 0
   const size = options?.size ?? PHOTO_PAGE_SIZE
   const params = new URLSearchParams({ page: String(page), size: String(size) })
-  const data = await request<unknown>(`/photos?${params}`, { signal: options?.signal })
+  const data = await request<unknown>(`/api/photos?${params}`, { signal: options?.signal })
   return parsePhotoPage(data)
 }
 
 export function uploadPhoto(file: File) {
   const body = new FormData()
   body.append('file', file)
-  return request<Photo>('/photos', { method: 'POST', body })
+  return request<Photo>('/api/photos', { method: 'POST', body })
 }
 
 export function getMemories(signal?: AbortSignal) {
-  return request<Memory[]>('/memories', { signal })
+  return request<Memory[]>('/api/memories', { signal })
 }
 
 export function createMemory(data: { name: string; message: string }) {
-  return request<Memory>('/memories', {
+  return request<Memory>('/api/memories', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(data),
