@@ -70,8 +70,8 @@ class PhotoControllerTest {
 
 	@Test
 	void uploadMapsUnsupportedTypeTo415() throws Exception {
-		when(photoService.upload(org.mockito.ArgumentMatchers.any())).thenThrow(
-				new ApiException(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+		when(photoService.upload(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.nullable(String.class)))
+				.thenThrow(new ApiException(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
 						"Desteklenmeyen bir format. JPG, PNG, WEBP veya HEIC kullanın."));
 
 		mockMvc.perform(multipart("/api/photos").file(

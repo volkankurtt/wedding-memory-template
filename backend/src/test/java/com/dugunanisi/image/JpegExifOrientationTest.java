@@ -24,6 +24,14 @@ class JpegExifOrientationTest {
 	}
 
 	@Test
+	void readsIphoneStyleApp1WithXmpPaddingAndManyIfdTags() throws Exception {
+		byte[] original = OrientedJpegs.solidHalves(64, 32);
+		byte[] iphone = OrientedJpegs.withIphoneStyleOrientation(original, 6);
+		assertThat(JpegExifOrientation.read(iphone)).isEqualTo(6);
+		assertThat(JpegExifOrientation.readFromApp1(iphone)).isEqualTo(6);
+	}
+
+	@Test
 	void ignoresNonJpegAndMissingExif() {
 		assertThat(JpegExifOrientation.read(new byte[] { 1, 2, 3 })).isEqualTo(1);
 		assertThat(JpegExifOrientation.read(new byte[] { (byte) 0xFF, (byte) 0xD8, (byte) 0xFF })).isEqualTo(1);
@@ -55,36 +63,73 @@ final class OrientedJpegs {
 	}
 
 	static byte[] withOrientation(byte[] jpeg, int orientation, boolean littleEndian) {
-		byte[] app1 = exifApp1(orientation, littleEndian);
-		byte[] out = new byte[jpeg.length + app1.length];
+		return insertAfterSoi(jpeg, exifApp1(orientation, littleEndian, 0, false));
+	}
+
+	static byte[] withIphoneStyleOrientation(byte[] jpeg, int orientation) {
+		byte[] xmp = xmpApp1();
+		byte[] exif = exifApp1(orientation, true, 4, true);
+		byte[] prefix = new byte[xmp.length + exif.length];
+		System.arraycopy(xmp, 0, prefix, 0, xmp.length);
+		System.arraycopy(exif, 0, prefix, xmp.length, exif.length);
+		return insertAfterSoi(jpeg, prefix);
+	}
+
+	private static byte[] insertAfterSoi(byte[] jpeg, byte[] segment) {
+		byte[] out = new byte[jpeg.length + segment.length];
 		out[0] = jpeg[0];
 		out[1] = jpeg[1];
-		System.arraycopy(app1, 0, out, 2, app1.length);
-		System.arraycopy(jpeg, 2, out, 2 + app1.length, jpeg.length - 2);
+		System.arraycopy(segment, 0, out, 2, segment.length);
+		System.arraycopy(jpeg, 2, out, 2 + segment.length, jpeg.length - 2);
 		return out;
 	}
 
-	private static byte[] exifApp1(int orientation, boolean littleEndian) {
-		byte[] tiff = new byte[26];
+	private static byte[] xmpApp1() {
+		byte[] payload = "http://ns.adobe.com/xap/1.0/\0<x:xmpmeta/>".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+		byte[] app1 = new byte[4 + payload.length];
+		app1[0] = (byte) 0xFF;
+		app1[1] = (byte) 0xE1;
+		int length = payload.length + 2;
+		app1[2] = (byte) ((length >> 8) & 0xFF);
+		app1[3] = (byte) (length & 0xFF);
+		System.arraycopy(payload, 0, app1, 4, payload.length);
+		return app1;
+	}
+
+	private static byte[] exifApp1(int orientation, boolean littleEndian, int paddingBeforeTiff, boolean manyTags) {
+		int extraTags = manyTags ? 6 : 0;
+		int entries = 1 + extraTags;
+		int tiffSize = 8 + 2 + entries * 12 + 4;
+		byte[] tiff = new byte[paddingBeforeTiff + tiffSize];
+		int tiffStart = paddingBeforeTiff;
 		if (littleEndian) {
-			tiff[0] = 'I';
-			tiff[1] = 'I';
-			tiff[2] = 0x2A;
-			tiff[3] = 0x00;
-			tiff[4] = 0x08;
+			tiff[tiffStart] = 'I';
+			tiff[tiffStart + 1] = 'I';
+			tiff[tiffStart + 2] = 0x2A;
+			tiff[tiffStart + 3] = 0x00;
+			putU32(tiff, tiffStart + 4, 8, true);
 		}
 		else {
-			tiff[0] = 'M';
-			tiff[1] = 'M';
-			tiff[2] = 0x00;
-			tiff[3] = 0x2A;
-			tiff[7] = 0x08;
+			tiff[tiffStart] = 'M';
+			tiff[tiffStart + 1] = 'M';
+			tiff[tiffStart + 2] = 0x00;
+			tiff[tiffStart + 3] = 0x2A;
+			putU32(tiff, tiffStart + 4, 8, false);
 		}
-		putU16(tiff, 8, 1, littleEndian);
-		putU16(tiff, 10, 0x0112, littleEndian);
-		putU16(tiff, 12, 3, littleEndian);
-		putU32(tiff, 14, 1, littleEndian);
-		putU16(tiff, 18, orientation, littleEndian);
+		putU16(tiff, tiffStart + 8, entries, littleEndian);
+		int cursor = tiffStart + 10;
+		int[] dummyTags = { 0x0100, 0x0101, 0x0103, 0x0106, 0x0115, 0x011C };
+		for (int i = 0; i < extraTags; i++) {
+			putU16(tiff, cursor, dummyTags[i], littleEndian);
+			putU16(tiff, cursor + 2, 3, littleEndian);
+			putU32(tiff, cursor + 4, 1, littleEndian);
+			putU16(tiff, cursor + 8, 1, littleEndian);
+			cursor += 12;
+		}
+		putU16(tiff, cursor, 0x0112, littleEndian);
+		putU16(tiff, cursor + 2, 3, littleEndian);
+		putU32(tiff, cursor + 4, 1, littleEndian);
+		putU16(tiff, cursor + 8, orientation, littleEndian);
 		byte[] app1 = new byte[2 + 2 + 6 + tiff.length];
 		app1[0] = (byte) 0xFF;
 		app1[1] = (byte) 0xE1;

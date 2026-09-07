@@ -2,10 +2,12 @@ package com.dugunanisi.service;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -73,12 +75,19 @@ public class PhotoService {
 
 	@Transactional
 	public PhotoResponse upload(MultipartFile file) {
+		return upload(file, null);
+	}
+
+	@Transactional
+	public PhotoResponse upload(MultipartFile file, String clientUploadId) {
 		long started = System.nanoTime();
-		log.info("POST /api/photos received empty={} size={} contentType={} name={}",
+		String uploadKey = parseUploadId(clientUploadId);
+		log.info("POST /api/photos received empty={} size={} contentType={} name={} uploadId={}",
 				file == null || file.isEmpty(),
 				file == null ? -1 : file.getSize(),
 				file == null ? null : file.getContentType(),
-				file == null ? null : safeFileName(file.getOriginalFilename()));
+				file == null ? null : safeFileName(file.getOriginalFilename()),
+				uploadKey);
 		if (file == null || file.isEmpty()) {
 			throw new ApiException(HttpStatus.BAD_REQUEST, "Lütfen bir fotoğraf seçin.");
 		}
@@ -99,28 +108,72 @@ public class PhotoService {
 			throw unsupportedType();
 		}
 
+		if (uploadKey != null) {
+			Optional<Photo> existing = photos.findByClientUploadId(uploadKey);
+			if (existing.isPresent() && existing.get().getStatus() == PhotoStatus.READY) {
+				log.info("Idempotent upload replay id={} uploadId={}", existing.get().getId(), uploadKey);
+				return PhotoResponse.from(existing.get());
+			}
+			if (existing.isPresent()) {
+				return storeAndComplete(existing.get(), bytes, type, started);
+			}
+		}
+
 		UUID id = UUID.randomUUID();
 		String originalPath = id + "/original";
-		String displayPath = id + "/display.jpg";
-		log.info("Photo upload started id={} type={} size={} name={}", id, type, bytes.length, safeFileName(file.getOriginalFilename()));
-		Photo photo = photos.save(new Photo(id, safeFileName(file.getOriginalFilename()), type.contentType(), bytes.length, originalPath));
+		String fileName = safeFileName(file.getOriginalFilename());
+		log.info("Photo upload started id={} type={} size={} name={} uploadId={}", id, type, bytes.length, fileName, uploadKey);
+		Photo photo;
+		try {
+			photo = photos.save(new Photo(id, fileName, type.contentType(), bytes.length, originalPath, uploadKey));
+		}
+		catch (DataIntegrityViolationException exception) {
+			if (uploadKey == null) {
+				throw exception;
+			}
+			Photo raced = photos.findByClientUploadId(uploadKey)
+					.orElseThrow(() -> exception);
+			if (raced.getStatus() == PhotoStatus.READY) {
+				log.info("Idempotent upload replay after race id={} uploadId={}", raced.getId(), uploadKey);
+				return PhotoResponse.from(raced);
+			}
+			return storeAndComplete(raced, bytes, type, started);
+		}
+		return storeAndComplete(photo, bytes, type, started);
+	}
 
+	private PhotoResponse storeAndComplete(Photo photo, byte[] bytes, DetectedImageType type, long started) {
+		UUID id = photo.getId();
+		String originalPath = photo.getStoragePath();
+		String displayPath = id + "/display.jpg";
 		try {
 			log.info("Uploading original to storage path={}", originalPath);
 			long originalStarted = System.nanoTime();
 			storage.put(originalPath, bytes, type.contentType());
 			log.info("Original stored id={} ms={} sinceStartMs={}", id, elapsedMs(originalStarted), elapsedMs(started));
 			long convertStarted = System.nanoTime();
-			byte[] displayJpeg = converter.toDisplayJpeg(bytes, type);
-			log.info("Display generated id={} ms={} sinceStartMs={} bytes={}",
-					id, elapsedMs(convertStarted), elapsedMs(started), displayJpeg.length);
+			byte[] displayJpeg = converter.toDisplayJpeg(bytes, type, photo.getOriginalFileName());
+			log.info("Display generated id={} file={} contentType={} ms={} sinceStartMs={} bytes={} path={}",
+					id,
+					photo.getOriginalFileName(),
+					type.contentType(),
+					elapsedMs(convertStarted),
+					elapsedMs(started),
+					displayJpeg.length,
+					displayPath);
 			long displayStoreStarted = System.nanoTime();
 			storage.put(displayPath, displayJpeg, "image/jpeg");
-			log.info("Display stored id={} ms={} sinceStartMs={} path={}",
-					id, elapsedMs(displayStoreStarted), elapsedMs(started), displayPath);
+			log.info("Display stored id={} ms={} sinceStartMs={} path={} totalMs={}",
+					id, elapsedMs(displayStoreStarted), elapsedMs(started), displayPath, elapsedMs(started));
 			photo.markReady(properties.getSupabase().publicObjectUrl(displayPath));
 			PhotoResponse response = PhotoResponse.from(photos.save(photo));
-			log.info("Upload response sent id={} totalMs={}", id, elapsedMs(started));
+			log.info("Upload response sent id={} file={} contentType={} displayBytes={} path={} totalMs={}",
+					id,
+					photo.getOriginalFileName(),
+					type.contentType(),
+					displayJpeg.length,
+					displayPath,
+					elapsedMs(started));
 			return response;
 		}
 		catch (ImageConversionException | StorageException exception) {
@@ -133,6 +186,18 @@ public class PhotoService {
 						"Fotoğraf görüntüye dönüştürülemedi. Lütfen tekrar deneyin.");
 			}
 			throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "Fotoğraf depolanamadı. Lütfen tekrar deneyin.");
+		}
+	}
+
+	private static String parseUploadId(String raw) {
+		if (raw == null || raw.isBlank()) {
+			return null;
+		}
+		try {
+			return UUID.fromString(raw.trim()).toString();
+		}
+		catch (IllegalArgumentException exception) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "Yükleme isteği işlenemedi.");
 		}
 	}
 

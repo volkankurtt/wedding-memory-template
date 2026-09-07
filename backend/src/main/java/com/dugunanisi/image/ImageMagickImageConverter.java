@@ -41,10 +41,17 @@ public class ImageMagickImageConverter implements ImageConverter {
 
 	@Override
 	public byte[] toDisplayJpeg(byte[] original, DetectedImageType type) {
+		return toDisplayJpeg(original, type, null);
+	}
+
+	@Override
+	public byte[] toDisplayJpeg(byte[] original, DetectedImageType type, String originalFileName) {
 		if (type == DetectedImageType.JPEG || type == DetectedImageType.PNG || type == DetectedImageType.WEBP) {
 			try {
-				byte[] jpeg = resizeWithImageIo(original, type);
-				log.info("ImageIO display jpeg ready type={} bytes={}", type, jpeg.length);
+				byte[] jpeg = resizeWithImageIo(original, type, originalFileName);
+				if (type != DetectedImageType.JPEG) {
+					log.info("ImageIO display jpeg ready type={} bytes={}", type, jpeg.length);
+				}
 				return jpeg;
 			}
 			catch (Exception exception) {
@@ -113,15 +120,26 @@ public class ImageMagickImageConverter implements ImageConverter {
 	}
 
 	static byte[] resizeWithImageIo(byte[] original, DetectedImageType type) throws IOException {
+		return resizeWithImageIo(original, type, null);
+	}
+
+	static byte[] resizeWithImageIo(byte[] original, DetectedImageType type, String originalFileName) throws IOException {
+		long started = System.nanoTime();
 		BufferedImage source = ImageIO.read(new ByteArrayInputStream(original));
 		if (source == null) {
 			throw new IOException("ImageIO could not read image");
 		}
+		int originalWidth = source.getWidth();
+		int originalHeight = source.getHeight();
+		int orientation = JpegExifOrientation.NORMAL;
 		if (type == DetectedImageType.JPEG) {
-			source = applyExifOrientation(source, JpegExifOrientation.read(original));
+			orientation = JpegExifOrientation.read(original);
+			source = applyExifOrientation(source, orientation);
 		}
-		int width = source.getWidth();
-		int height = source.getHeight();
+		int orientedWidth = source.getWidth();
+		int orientedHeight = source.getHeight();
+		int width = orientedWidth;
+		int height = orientedHeight;
 		int longest = Math.max(width, height);
 		int targetW = width;
 		int targetH = height;
@@ -141,7 +159,27 @@ public class ImageMagickImageConverter implements ImageConverter {
 		finally {
 			graphics.dispose();
 		}
-		return writeJpeg(rgb);
+		byte[] jpeg = writeJpeg(rgb);
+		if (type == DetectedImageType.JPEG) {
+			log.info(
+					"JPEG display file={} contentType={} orientation={} original={}x{} afterOrientation={}x{} display={}x{} displayBytes={} totalMs={}",
+					originalFileName,
+					type.contentType(),
+					orientation,
+					originalWidth,
+					originalHeight,
+					orientedWidth,
+					orientedHeight,
+					targetW,
+					targetH,
+					jpeg.length,
+					elapsedMs(started));
+		}
+		return jpeg;
+	}
+
+	private static long elapsedMs(long startedNanos) {
+		return (System.nanoTime() - startedNanos) / 1_000_000L;
 	}
 
 	static BufferedImage applyExifOrientation(BufferedImage source, int orientation) {

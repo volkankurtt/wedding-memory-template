@@ -82,6 +82,70 @@ class ImageMagickImageConverterTest {
 	}
 
 	@Test
+	void orientation3JpegRotates180() throws Exception {
+		byte[] original = OrientedJpegs.withOrientation(OrientedJpegs.solidHalves(64, 32), 3, true);
+
+		byte[] display = converter().toDisplayJpeg(original, DetectedImageType.JPEG);
+		BufferedImage image = OrientedJpegs.read(display);
+
+		assertThat(image.getWidth()).isEqualTo(64);
+		assertThat(image.getHeight()).isEqualTo(32);
+		assertThat(OrientedJpegs.bluish(sample(image, 0.25, 0.5))).isTrue();
+		assertThat(OrientedJpegs.reddish(sample(image, 0.75, 0.5))).isTrue();
+	}
+
+	@Test
+	void orientation4JpegIsFlippedVertically() throws Exception {
+		byte[] original = OrientedJpegs.withOrientation(OrientedJpegs.solidHalves(64, 32), 4, true);
+
+		byte[] display = converter().toDisplayJpeg(original, DetectedImageType.JPEG);
+		BufferedImage image = OrientedJpegs.read(display);
+
+		assertThat(image.getWidth()).isEqualTo(64);
+		assertThat(image.getHeight()).isEqualTo(32);
+		assertThat(OrientedJpegs.reddish(sample(image, 0.25, 0.5))).isTrue();
+		assertThat(OrientedJpegs.bluish(sample(image, 0.75, 0.5))).isTrue();
+	}
+
+	@Test
+	void orientation5And7SwapToPortrait() throws Exception {
+		BufferedImage five = OrientedJpegs.read(converter().toDisplayJpeg(
+				OrientedJpegs.withOrientation(OrientedJpegs.solidHalves(64, 32), 5, true),
+				DetectedImageType.JPEG));
+		BufferedImage seven = OrientedJpegs.read(converter().toDisplayJpeg(
+				OrientedJpegs.withOrientation(OrientedJpegs.solidHalves(64, 32), 7, false),
+				DetectedImageType.JPEG));
+
+		assertThat(five.getWidth()).isEqualTo(32);
+		assertThat(five.getHeight()).isEqualTo(64);
+		assertThat(seven.getWidth()).isEqualTo(32);
+		assertThat(seven.getHeight()).isEqualTo(64);
+	}
+
+	@Test
+	void iphoneStyleOrientation6BecomesPortrait() throws Exception {
+		byte[] original = OrientedJpegs.withIphoneStyleOrientation(OrientedJpegs.solidHalves(64, 32), 6);
+
+		byte[] display = converter().toDisplayJpeg(original, DetectedImageType.JPEG);
+		BufferedImage image = OrientedJpegs.read(display);
+
+		assertThat(image.getWidth()).isEqualTo(32);
+		assertThat(image.getHeight()).isEqualTo(64);
+		assertThat(OrientedJpegs.reddish(sample(image, 0.5, 0.25))).isTrue();
+		assertThat(OrientedJpegs.bluish(sample(image, 0.5, 0.75))).isTrue();
+	}
+
+	@Test
+	void originalJpegBytesAreNotMutated() throws Exception {
+		byte[] original = OrientedJpegs.withIphoneStyleOrientation(OrientedJpegs.solidHalves(64, 32), 8);
+		byte[] copy = original.clone();
+
+		converter().toDisplayJpeg(original, DetectedImageType.JPEG);
+
+		assertThat(original).isEqualTo(copy);
+	}
+
+	@Test
 	void orientationIsAppliedBeforeLongEdgeResize() throws Exception {
 		byte[] original = OrientedJpegs.withOrientation(OrientedJpegs.solidHalves(2000, 1000), 6, true);
 

@@ -57,6 +57,27 @@ class PhotoApiIT {
 	}
 
 	@Test
+	void sameUploadIdDoesNotDuplicateReadyPhoto() throws Exception {
+		var first = mockMvc.perform(multipart("/api/photos")
+						.file(new MockMultipartFile("file", "masa.jpg", "image/jpeg", TestImages.JPEG))
+						.param("uploadId", "cccccccc-cccc-cccc-cccc-cccccccccccc"))
+				.andExpect(status().isCreated())
+				.andReturn();
+		String body = first.getResponse().getContentAsString();
+		String id = body.replaceAll(".*\"id\"\\s*:\\s*\"([^\"]+)\".*", "$1");
+
+		mockMvc.perform(multipart("/api/photos")
+						.file(new MockMultipartFile("file", "masa.jpg", "image/jpeg", TestImages.JPEG))
+						.param("uploadId", "cccccccc-cccc-cccc-cccc-cccccccccccc"))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.id").value(id));
+
+		mockMvc.perform(get("/api/photos"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.photos", hasSize(1)));
+	}
+
+	@Test
 	void rejectsGifWith415() throws Exception {
 		mockMvc.perform(multipart("/api/photos").file(
 						new MockMultipartFile("file", "x.gif", "image/gif", TestImages.GIF)))

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
-import { toUserMessage, uploadPhoto } from '../api/client'
+import { toUserMessage, uploadPhotoWithRetry, waitForApi } from '../api/client'
+import { failedUploadItems, pendingUploadItems, runPhotoUploadSession } from '../api/photoUploadSession'
 import { ACCEPT_ATTR, UPLOAD_LIMITS } from '../config/limits'
 import { useGuestState } from '../context/GuestState'
 import { IconCamera } from './Icons'
 
 type UploadStatus = 'WAITING' | 'UPLOADING' | 'SUCCESS' | 'FAILED'
+type UploadPhase = 'idle' | 'warmup' | 'uploading'
 
 type QueueItem = {
   id: string
@@ -14,9 +16,6 @@ type QueueItem = {
   status: UploadStatus
   error: string | null
 }
-
-const MAX_CONCURRENCY = 3
-const SERVER_WAIT_HINT_MS = 8_000
 
 function isHeic(file: File) {
   const name = file.name.toLowerCase()
@@ -54,18 +53,6 @@ function statusLabel(item: QueueItem) {
   return item.error ?? 'Yüklenemedi'
 }
 
-async function runPool<T>(items: T[], worker: (item: T) => Promise<void>) {
-  let next = 0
-  const runners = Array.from({ length: Math.min(MAX_CONCURRENCY, items.length) }, async () => {
-    while (next < items.length) {
-      const current = next
-      next += 1
-      await worker(items[current])
-    }
-  })
-  await Promise.all(runners)
-}
-
 type Props = {
   onDone?: () => void
   onCancel?: () => void
@@ -79,11 +66,10 @@ export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = f
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [phase, setPhase] = useState<UploadPhase>('idle')
   const [done, setDone] = useState<string | null>(null)
-  const [warmupHint, setWarmupHint] = useState(false)
-  const [awaitingFirstResponse, setAwaitingFirstResponse] = useState(false)
 
-  const selected = queue.filter((item) => item.status !== 'SUCCESS')
+  const selected = pendingUploadItems(queue)
   const successCount = queue.filter((item) => item.status === 'SUCCESS').length
   const countLabel = useMemo(
     () => `${queue.length} / ${UPLOAD_LIMITS.maxFilesPerRequest} fotoğraf seçildi`,
@@ -103,15 +89,6 @@ export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = f
     window.addEventListener('beforeunload', onUnload)
     return () => window.removeEventListener('beforeunload', onUnload)
   }, [busy])
-
-  useEffect(() => {
-    if (!busy || !awaitingFirstResponse) {
-      setWarmupHint(false)
-      return
-    }
-    const timer = window.setTimeout(() => setWarmupHint(true), SERVER_WAIT_HINT_MS)
-    return () => window.clearTimeout(timer)
-  }, [busy, awaitingFirstResponse])
 
   function onPick(event: ChangeEvent<HTMLInputElement>) {
     setError(null)
@@ -181,7 +158,7 @@ export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = f
     )
 
     try {
-      const photo = await uploadPhoto(file)
+      const photo = await uploadPhotoWithRetry(file, id)
       prependPhotos([photo])
       setQueue((current) =>
         current.map((entry) => (entry.id === id ? { ...entry, status: 'SUCCESS', error: null } : entry)),
@@ -193,19 +170,37 @@ export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = f
           entry.id === id ? { ...entry, status: 'FAILED', error: message } : entry,
         ),
       )
-    } finally {
-      setAwaitingFirstResponse(false)
     }
   }
 
   async function uploadIds(items: QueueItem[]) {
     if (!items.length) return
     setBusy(true)
+    setPhase('warmup')
     setError(null)
     setDone(null)
-    setWarmupHint(false)
-    setAwaitingFirstResponse(true)
-    await runPool(items, uploadOne)
+    try {
+      await runPhotoUploadSession({
+        items,
+        waitForApi: async () => {
+          await waitForApi()
+          setPhase('uploading')
+        },
+        upload: uploadOne,
+      })
+    } catch (cause) {
+      setError(toUserMessage(cause))
+      setQueue((current) =>
+        current.map((entry) =>
+          items.some((item) => item.id === entry.id) && entry.status !== 'SUCCESS'
+            ? { ...entry, status: 'FAILED', error: toUserMessage(cause) }
+            : entry,
+        ),
+      )
+      setBusy(false)
+      setPhase('idle')
+      return
+    }
     setQueue((current) => {
       const ok = current.filter((entry) => entry.status === 'SUCCESS').length
       const failed = current.filter((entry) => entry.status === 'FAILED').length
@@ -219,7 +214,7 @@ export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = f
       return current
     })
     setBusy(false)
-    setAwaitingFirstResponse(false)
+    setPhase('idle')
   }
 
   async function onSubmit(event: FormEvent) {
@@ -237,12 +232,11 @@ export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = f
       setError(`${oversized.file.name} dosyası ${UPLOAD_LIMITS.maxFileSizeMb} MB sınırını aşıyor.`)
       return
     }
-    const pending = queue.filter((item) => item.status !== 'SUCCESS')
-    await uploadIds(pending)
+    await uploadIds(pendingUploadItems(queue))
   }
 
   function retryOne(id: string) {
-    const item = queue.find((entry) => entry.id === id)
+    const item = failedUploadItems(queue).find((entry) => entry.id === id)
     if (item) void uploadIds([item])
   }
 
@@ -309,10 +303,9 @@ export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = f
       </div>
       {busy ? (
         <>
-          <p className="form-note">Fotoğraflar yükleniyor, lütfen bekleyin.</p>
-          {warmupHint ? (
-            <p className="form-note">Sunucu hazırlanıyor, birkaç saniye sürebilir...</p>
-          ) : null}
+          <p className="form-note">
+            {phase === 'warmup' ? 'Sunucu hazırlanıyor, lütfen bekleyin...' : 'Fotoğraflar yükleniyor, lütfen bekleyin.'}
+          </p>
           <p className="form-note">
             {successCount} / {queue.length} fotoğraf yüklendi
           </p>

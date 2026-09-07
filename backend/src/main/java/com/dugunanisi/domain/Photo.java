@@ -30,6 +30,9 @@ public class Photo {
 	@Column(name = "storage_path", nullable = false, length = 255)
 	private String storagePath;
 
+	@Column(name = "client_upload_id", length = 36, unique = true)
+	private String clientUploadId;
+
 	@Column(name = "public_path", length = 512)
 	private String publicPath;
 
@@ -44,11 +47,22 @@ public class Photo {
 	}
 
 	public Photo(UUID id, String originalFileName, String contentType, long sizeBytes, String storagePath) {
+		this(id, originalFileName, contentType, sizeBytes, storagePath, null);
+	}
+
+	public Photo(
+			UUID id,
+			String originalFileName,
+			String contentType,
+			long sizeBytes,
+			String storagePath,
+			String clientUploadId) {
 		this.id = id;
 		this.originalFileName = originalFileName;
 		this.contentType = contentType;
 		this.sizeBytes = sizeBytes;
 		this.storagePath = storagePath;
+		this.clientUploadId = clientUploadId;
 		this.status = PhotoStatus.PENDING;
 		this.createdAt = Instant.now();
 	}
@@ -90,6 +104,10 @@ public class Photo {
 
 	public String getStoragePath() {
 		return storagePath;
+	}
+
+	public String getClientUploadId() {
+		return clientUploadId;
 	}
 
 	public String getPublicPath() {

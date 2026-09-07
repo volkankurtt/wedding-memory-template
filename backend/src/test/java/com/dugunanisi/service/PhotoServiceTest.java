@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -64,7 +65,7 @@ class PhotoServiceTest {
 
 	@Test
 	void uploadsHeicWithout415AndStoresUuidPaths() {
-		when(converter.toDisplayJpeg(any(), eq(DetectedImageType.HEIC))).thenReturn(TestImages.JPEG);
+		when(converter.toDisplayJpeg(any(), eq(DetectedImageType.HEIC), any())).thenReturn(TestImages.JPEG);
 		MockMultipartFile file = new MockMultipartFile(
 				"file",
 				"IMG_1000.HEIC",
@@ -117,8 +118,45 @@ class PhotoServiceTest {
 	}
 
 	@Test
+	void sameUploadIdDoesNotCreateDuplicateWhenAlreadyReady() {
+		String uploadId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+		Photo ready = readyPhoto("a.jpg", uploadId);
+		when(photos.findByClientUploadId(uploadId)).thenReturn(Optional.of(ready));
+		MockMultipartFile file = new MockMultipartFile("file", "a.jpg", "image/jpeg", TestImages.JPEG);
+
+		var response = service.upload(file, uploadId);
+
+		assertThat(response.id()).isEqualTo(ready.getId());
+		verify(storage, never()).put(anyString(), any(), anyString());
+		verify(converter, never()).toDisplayJpeg(any(), any(), any());
+	}
+
+	@Test
+	void failedUploadIdReusesSamePhotoAndStoragePaths() {
+		String uploadId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+		Photo failed = new Photo(
+				UUID.fromString(uploadId),
+				"a.jpg",
+				"image/jpeg",
+				TestImages.JPEG.length,
+				UUID.fromString(uploadId) + "/original",
+				uploadId);
+		failed.markFailed();
+		when(photos.findByClientUploadId(uploadId)).thenReturn(Optional.of(failed));
+		when(converter.toDisplayJpeg(any(), eq(DetectedImageType.JPEG), any())).thenReturn(TestImages.JPEG);
+		MockMultipartFile file = new MockMultipartFile("file", "a.jpg", "image/jpeg", TestImages.JPEG);
+
+		var response = service.upload(file, uploadId);
+
+		assertThat(response.id()).isEqualTo(failed.getId());
+		verify(storage).put(eq(failed.getId() + "/original"), eq(TestImages.JPEG), eq("image/jpeg"));
+		verify(storage).put(eq(failed.getId() + "/display.jpg"), eq(TestImages.JPEG), eq("image/jpeg"));
+		verify(photos, times(1)).save(failed);
+	}
+
+	@Test
 	void conversionFailureMarksFailed() {
-		when(converter.toDisplayJpeg(any(), any())).thenThrow(new ImageConversionException("boom"));
+		when(converter.toDisplayJpeg(any(), any(), any())).thenThrow(new ImageConversionException("boom"));
 		MockMultipartFile file = new MockMultipartFile("file", "a.jpg", "image/jpeg", TestImages.JPEG);
 
 		assertThatThrownBy(() -> service.upload(file))
@@ -180,8 +218,12 @@ class PhotoServiceTest {
 	}
 
 	private static Photo readyPhoto(String fileName) {
+		return readyPhoto(fileName, null);
+	}
+
+	private static Photo readyPhoto(String fileName, String clientUploadId) {
 		UUID id = UUID.randomUUID();
-		Photo photo = new Photo(id, fileName, "image/jpeg", 10, id + "/original");
+		Photo photo = new Photo(id, fileName, "image/jpeg", 10, id + "/original", clientUploadId);
 		photo.markReady("https://example.supabase.co/storage/v1/object/public/guest-photos/" + id + "/display.jpg");
 		return photo;
 	}

@@ -33,7 +33,9 @@ public class PhotoController {
 
 	@PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	@ResponseStatus(HttpStatus.CREATED)
-	public PhotoResponse upload(@RequestParam(value = "file", required = false) MultipartFile file) {
-		return photos.upload(file);
+	public PhotoResponse upload(
+			@RequestParam(value = "file", required = false) MultipartFile file,
+			@RequestParam(value = "uploadId", required = false) String uploadId) {
+		return photos.upload(file, uploadId);
 	}
 }
