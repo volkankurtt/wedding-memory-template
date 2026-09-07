@@ -19,6 +19,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.dugunanisi.api.dto.PhotoPageResponse;
 import com.dugunanisi.api.dto.PhotoResponse;
 import com.dugunanisi.service.PhotoService;
 import com.dugunanisi.support.TestImages;
@@ -38,22 +39,33 @@ class PhotoControllerTest {
 		UUID id = UUID.fromString("22222222-2222-2222-2222-222222222222");
 		String displayUrl = "https://example.supabase.co/storage/v1/object/public/guest-photos/" + id + "/display.jpg";
 		String originalUrl = "https://example.supabase.co/storage/v1/object/public/guest-photos/" + id + "/original";
-		when(photoService.listReady()).thenReturn(List.of(new PhotoResponse(
-				id,
-				"masa.jpg",
-				displayUrl,
-				displayUrl,
-				originalUrl,
-				Instant.parse("2026-09-07T12:00:00Z"))));
+		when(photoService.listReady(0, 30)).thenReturn(new PhotoPageResponse(
+				List.of(new PhotoResponse(
+						id,
+						"masa.jpg",
+						displayUrl,
+						displayUrl,
+						originalUrl,
+						Instant.parse("2026-09-07T12:00:00Z"))),
+				0,
+				30,
+				1,
+				1,
+				false));
 
 		mockMvc.perform(get("/api/photos"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$[0].id").value(id.toString()))
-				.andExpect(jsonPath("$[0].fileName").value("masa.jpg"))
-				.andExpect(jsonPath("$[0].fileUrl").value(displayUrl))
-				.andExpect(jsonPath("$[0].displayUrl").value(displayUrl))
-				.andExpect(jsonPath("$[0].originalUrl").value(originalUrl))
-				.andExpect(jsonPath("$[0].createdAt").value("2026-09-07T12:00:00Z"));
+				.andExpect(jsonPath("$.page").value(0))
+				.andExpect(jsonPath("$.size").value(30))
+				.andExpect(jsonPath("$.totalElements").value(1))
+				.andExpect(jsonPath("$.totalPages").value(1))
+				.andExpect(jsonPath("$.hasNext").value(false))
+				.andExpect(jsonPath("$.photos[0].id").value(id.toString()))
+				.andExpect(jsonPath("$.photos[0].fileName").value("masa.jpg"))
+				.andExpect(jsonPath("$.photos[0].fileUrl").value(displayUrl))
+				.andExpect(jsonPath("$.photos[0].displayUrl").value(displayUrl))
+				.andExpect(jsonPath("$.photos[0].originalUrl").value(originalUrl))
+				.andExpect(jsonPath("$.photos[0].createdAt").value("2026-09-07T12:00:00Z"));
 	}
 
 	@Test

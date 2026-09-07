@@ -2,17 +2,21 @@ package com.dugunanisi.service;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.dugunanisi.api.ApiException;
+import com.dugunanisi.api.dto.PhotoPageResponse;
 import com.dugunanisi.api.dto.PhotoResponse;
 import com.dugunanisi.config.AppProperties;
 import com.dugunanisi.domain.Photo;
@@ -29,6 +33,8 @@ import com.dugunanisi.storage.StorageException;
 public class PhotoService {
 
 	public static final long MAX_FILE_SIZE_BYTES = 25L * 1024 * 1024;
+	public static final int DEFAULT_PAGE_SIZE = 30;
+	public static final int MAX_PAGE_SIZE = 60;
 	private static final Logger log = LoggerFactory.getLogger(PhotoService.class);
 
 	private final PhotoRepository photos;
@@ -51,8 +57,18 @@ public class PhotoService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<PhotoResponse> listReady() {
-		return photos.findByStatusOrderByCreatedAtDesc(PhotoStatus.READY).stream().map(PhotoResponse::from).toList();
+	public PhotoPageResponse listReady(int page, int size) {
+		int safePage = Math.max(page, 0);
+		int safeSize = size <= 0 ? DEFAULT_PAGE_SIZE : Math.min(size, MAX_PAGE_SIZE);
+		Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt"));
+		Page<Photo> result = photos.findByStatus(PhotoStatus.READY, pageable);
+		return new PhotoPageResponse(
+				result.getContent().stream().map(PhotoResponse::from).toList(),
+				result.getNumber(),
+				result.getSize(),
+				result.getTotalElements(),
+				result.getTotalPages(),
+				result.hasNext());
 	}
 
 	@Transactional

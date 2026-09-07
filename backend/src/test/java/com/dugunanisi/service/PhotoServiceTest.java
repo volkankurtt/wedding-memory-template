@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
 
@@ -128,9 +133,56 @@ class PhotoServiceTest {
 	}
 
 	@Test
-	void listReturnsOnlyReady() {
-		when(photos.findByStatusOrderByCreatedAtDesc(PhotoStatus.READY)).thenReturn(List.of());
-		assertThat(service.listReady()).isEmpty();
-		verify(photos).findByStatusOrderByCreatedAtDesc(PhotoStatus.READY);
+	void listReadyUsesDefaultPageAndNewestFirst() {
+		when(photos.findByStatus(eq(PhotoStatus.READY), any(Pageable.class)))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 30), 0));
+
+		var response = service.listReady(0, 30);
+
+		assertThat(response.page()).isEqualTo(0);
+		assertThat(response.size()).isEqualTo(30);
+		assertThat(response.photos()).isEmpty();
+		assertThat(response.hasNext()).isFalse();
+
+		ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+		verify(photos).findByStatus(eq(PhotoStatus.READY), captor.capture());
+		Pageable pageable = captor.getValue();
+		assertThat(pageable.getPageNumber()).isEqualTo(0);
+		assertThat(pageable.getPageSize()).isEqualTo(30);
+		assertThat(pageable.getSort()).isEqualTo(Sort.by(Sort.Direction.DESC, "createdAt"));
+	}
+
+	@Test
+	void listReadyReportsHasNext() {
+		Photo first = readyPhoto("a.jpg");
+		when(photos.findByStatus(eq(PhotoStatus.READY), any(Pageable.class)))
+				.thenReturn(new PageImpl<>(List.of(first), PageRequest.of(0, 30), 61));
+
+		var response = service.listReady(0, 30);
+
+		assertThat(response.photos()).hasSize(1);
+		assertThat(response.totalElements()).isEqualTo(61);
+		assertThat(response.totalPages()).isEqualTo(3);
+		assertThat(response.hasNext()).isTrue();
+	}
+
+	@Test
+	void listReadyClampsSizeAboveMax() {
+		when(photos.findByStatus(eq(PhotoStatus.READY), any(Pageable.class)))
+				.thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, PhotoService.MAX_PAGE_SIZE), 0));
+
+		service.listReady(0, 120);
+
+		ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+		verify(photos).findByStatus(eq(PhotoStatus.READY), captor.capture());
+		assertThat(captor.getValue().getPageSize()).isEqualTo(PhotoService.MAX_PAGE_SIZE);
+		assertThat(captor.getValue().getPageNumber()).isEqualTo(0);
+	}
+
+	private static Photo readyPhoto(String fileName) {
+		UUID id = UUID.randomUUID();
+		Photo photo = new Photo(id, fileName, "image/jpeg", 10, id + "/original");
+		photo.markReady("https://example.supabase.co/storage/v1/object/public/guest-photos/" + id + "/display.jpg");
+		return photo;
 	}
 }

@@ -46,11 +46,14 @@ class PhotoApiIT {
 
 		mockMvc.perform(get("/api/photos"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$", hasSize(1)))
-				.andExpect(jsonPath("$[0].fileName").value("masa.jpg"))
-				.andExpect(jsonPath("$[0].fileUrl").value(endsWith("/display.jpg")))
-				.andExpect(jsonPath("$[0].displayUrl").value(endsWith("/display.jpg")))
-				.andExpect(jsonPath("$[0].originalUrl").value(endsWith("/original")));
+				.andExpect(jsonPath("$.photos", hasSize(1)))
+				.andExpect(jsonPath("$.page").value(0))
+				.andExpect(jsonPath("$.size").value(30))
+				.andExpect(jsonPath("$.hasNext").value(false))
+				.andExpect(jsonPath("$.photos[0].fileName").value("masa.jpg"))
+				.andExpect(jsonPath("$.photos[0].fileUrl").value(endsWith("/display.jpg")))
+				.andExpect(jsonPath("$.photos[0].displayUrl").value(endsWith("/display.jpg")))
+				.andExpect(jsonPath("$.photos[0].originalUrl").value(endsWith("/original")));
 	}
 
 	@Test
