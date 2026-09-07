@@ -1,4 +1,4 @@
-import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react'
 import { toUserMessage, uploadPhoto } from '../api/client'
 import { ACCEPT_ATTR, UPLOAD_LIMITS } from '../config/limits'
 import { useGuestState } from '../context/GuestState'
@@ -16,6 +16,7 @@ type QueueItem = {
 }
 
 const MAX_CONCURRENCY = 3
+const SERVER_WAIT_HINT_MS = 8_000
 
 function isHeic(file: File) {
   const name = file.name.toLowerCase()
@@ -68,15 +69,19 @@ async function runPool<T>(items: T[], worker: (item: T) => Promise<void>) {
 type Props = {
   onDone?: () => void
   onCancel?: () => void
+  onBusyChange?: (busy: boolean) => void
+  stayOpenNotice?: boolean
 }
 
-export function PhotoUpload({ onDone, onCancel }: Props) {
+export function PhotoUpload({ onDone, onCancel, onBusyChange, stayOpenNotice = false }: Props) {
   const { prependPhotos } = useGuestState()
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState<string | null>(null)
+  const [warmupHint, setWarmupHint] = useState(false)
+  const [awaitingFirstResponse, setAwaitingFirstResponse] = useState(false)
 
   const selected = queue.filter((item) => item.status !== 'SUCCESS')
   const successCount = queue.filter((item) => item.status === 'SUCCESS').length
@@ -84,6 +89,29 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
     () => `${queue.length} / ${UPLOAD_LIMITS.maxFilesPerRequest} fotoğraf seçildi`,
     [queue.length],
   )
+
+  useEffect(() => {
+    onBusyChange?.(busy)
+  }, [busy, onBusyChange])
+
+  useEffect(() => {
+    if (!busy) return
+    const onUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onUnload)
+    return () => window.removeEventListener('beforeunload', onUnload)
+  }, [busy])
+
+  useEffect(() => {
+    if (!busy || !awaitingFirstResponse) {
+      setWarmupHint(false)
+      return
+    }
+    const timer = window.setTimeout(() => setWarmupHint(true), SERVER_WAIT_HINT_MS)
+    return () => window.clearTimeout(timer)
+  }, [busy, awaitingFirstResponse])
 
   function onPick(event: ChangeEvent<HTMLInputElement>) {
     setError(null)
@@ -165,6 +193,8 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
           entry.id === id ? { ...entry, status: 'FAILED', error: message } : entry,
         ),
       )
+    } finally {
+      setAwaitingFirstResponse(false)
     }
   }
 
@@ -173,13 +203,15 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
     setBusy(true)
     setError(null)
     setDone(null)
+    setWarmupHint(false)
+    setAwaitingFirstResponse(true)
     await runPool(items, uploadOne)
     setQueue((current) => {
       const ok = current.filter((entry) => entry.status === 'SUCCESS').length
       const failed = current.filter((entry) => entry.status === 'FAILED').length
       setInfo(`${ok} / ${current.length} fotoğraf yüklendi`)
       if (failed === 0 && ok > 0) {
-        setDone('Fotoğraflarınız başarıyla eklendi')
+        setDone('Fotoğraflarınız başarıyla yüklendi.')
         window.setTimeout(() => onDone?.(), 1200)
       } else if (failed > 0) {
         setError('Bazı fotoğraflar yüklenemedi. Tekrar deneyebilirsiniz.')
@@ -187,6 +219,7 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
       return current
     })
     setBusy(false)
+    setAwaitingFirstResponse(false)
   }
 
   async function onSubmit(event: FormEvent) {
@@ -275,14 +308,23 @@ export function PhotoUpload({ onDone, onCancel }: Props) {
         </button>
       </div>
       {busy ? (
-        <p className="form-note">
-          {successCount} / {queue.length} fotoğraf yüklendi
-        </p>
+        <>
+          <p className="form-note">Fotoğraflar yükleniyor, lütfen bekleyin.</p>
+          {warmupHint ? (
+            <p className="form-note">Sunucu hazırlanıyor, birkaç saniye sürebilir...</p>
+          ) : null}
+          <p className="form-note">
+            {successCount} / {queue.length} fotoğraf yüklendi
+          </p>
+          {stayOpenNotice ? (
+            <p className="form-note">Yükleme devam ediyor. Lütfen pencereyi kapatmadan bekleyin.</p>
+          ) : null}
+        </>
       ) : info && !error ? (
         <p className="form-note">{info}</p>
       ) : null}
       {error ? <p className="form-error">{error}</p> : null}
-      {done ? <p className="form-note">{done}</p> : null}
+      {!busy && done ? <p className="form-note">{done}</p> : null}
     </form>
   )
 }

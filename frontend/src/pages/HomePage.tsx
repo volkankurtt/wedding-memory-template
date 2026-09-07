@@ -10,6 +10,17 @@ type Modal = 'upload' | 'share' | 'memory' | null
 
 export function HomePage() {
   const [modal, setModal] = useState<Modal>(null)
+  const [uploadBusy, setUploadBusy] = useState(false)
+  const [uploadStayNotice, setUploadStayNotice] = useState(false)
+
+  function closeUploadModal() {
+    if (uploadBusy) {
+      setUploadStayNotice(true)
+      return
+    }
+    setUploadStayNotice(false)
+    setModal(null)
+  }
 
   return (
     <>
@@ -17,8 +28,19 @@ export function HomePage() {
       <MemoryBook onWrite={() => setModal('memory')} />
 
       {modal === 'upload' ? (
-        <Dialog title="Fotoğraflarınızı Bizimle Paylaşın" hideTitle onClose={() => setModal(null)}>
-          <PhotoUpload onCancel={() => setModal(null)} onDone={() => setModal(null)} />
+        <Dialog title="Fotoğraflarınızı Bizimle Paylaşın" hideTitle onClose={closeUploadModal}>
+          <PhotoUpload
+            onCancel={closeUploadModal}
+            onDone={() => {
+              setUploadStayNotice(false)
+              setModal(null)
+            }}
+            onBusyChange={(busy) => {
+              setUploadBusy(busy)
+              if (!busy) setUploadStayNotice(false)
+            }}
+            stayOpenNotice={uploadStayNotice}
+          />
         </Dialog>
       ) : null}
 

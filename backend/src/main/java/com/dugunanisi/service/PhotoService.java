@@ -73,6 +73,7 @@ public class PhotoService {
 
 	@Transactional
 	public PhotoResponse upload(MultipartFile file) {
+		long started = System.nanoTime();
 		log.info("POST /api/photos received empty={} size={} contentType={} name={}",
 				file == null || file.isEmpty(),
 				file == null ? -1 : file.getSize(),
@@ -106,17 +107,25 @@ public class PhotoService {
 
 		try {
 			log.info("Uploading original to storage path={}", originalPath);
+			long originalStarted = System.nanoTime();
 			storage.put(originalPath, bytes, type.contentType());
-			log.info("Original stored, converting to display.jpg id={}", id);
+			log.info("Original stored id={} ms={} sinceStartMs={}", id, elapsedMs(originalStarted), elapsedMs(started));
+			long convertStarted = System.nanoTime();
 			byte[] displayJpeg = converter.toDisplayJpeg(bytes, type);
-			log.info("Display jpeg ready id={} bytes={}", id, displayJpeg.length);
+			log.info("Display generated id={} ms={} sinceStartMs={} bytes={}",
+					id, elapsedMs(convertStarted), elapsedMs(started), displayJpeg.length);
+			long displayStoreStarted = System.nanoTime();
 			storage.put(displayPath, displayJpeg, "image/jpeg");
-			log.info("Display stored path={}", displayPath);
+			log.info("Display stored id={} ms={} sinceStartMs={} path={}",
+					id, elapsedMs(displayStoreStarted), elapsedMs(started), displayPath);
 			photo.markReady(properties.getSupabase().publicObjectUrl(displayPath));
-			return PhotoResponse.from(photos.save(photo));
+			PhotoResponse response = PhotoResponse.from(photos.save(photo));
+			log.info("Upload response sent id={} totalMs={}", id, elapsedMs(started));
+			return response;
 		}
 		catch (ImageConversionException | StorageException exception) {
-			log.warn("Photo upload failed id={} status will be FAILED: {}", id, exception.getMessage());
+			log.warn("Photo upload failed id={} status will be FAILED sinceStartMs={}: {}",
+					id, elapsedMs(started), exception.getMessage());
 			photo.markFailed();
 			photos.save(photo);
 			if (exception instanceof ImageConversionException) {
@@ -147,5 +156,9 @@ public class PhotoService {
 		}
 		String name = Path.of(original.replace('\\', '/')).getFileName().toString().trim();
 		return name.isEmpty() ? "photo.jpg" : name;
+	}
+
+	private static long elapsedMs(long startedNanos) {
+		return (System.nanoTime() - startedNanos) / 1_000_000L;
 	}
 }
