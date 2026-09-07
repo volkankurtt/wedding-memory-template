@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import type { Photo } from '../types'
+import { downloadPhoto, photoDisplayUrl, photoDownloadName, photoOriginalUrl } from '../utils/downloadPhoto'
+import { IconDownload } from './Icons'
 
 type Props = {
   photos: Photo[]
@@ -8,8 +10,13 @@ type Props = {
   onIndex: (index: number) => void
 }
 
+const DOWNLOAD_ERROR = 'Fotoğraf indirilemedi. Lütfen tekrar deneyin.'
+
 export function Lightbox({ photos, index, onClose, onIndex }: Props) {
   const [startX, setStartX] = useState<number | null>(null)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
+  const downloadGen = useRef(0)
   const photo = photos[index]
 
   useEffect(() => {
@@ -27,10 +34,39 @@ export function Lightbox({ photos, index, onClose, onIndex }: Props) {
     }
   }, [index, photos.length, onClose, onIndex])
 
+  useEffect(() => {
+    downloadGen.current += 1
+    setDownloading(false)
+    setDownloadError(null)
+  }, [photo?.id])
+
   if (!photo) return null
 
   function go(delta: number) {
     onIndex((index + delta + photos.length) % photos.length)
+  }
+
+  async function onDownload(event: MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation()
+    const originalUrl = photoOriginalUrl(photo)
+    if (!originalUrl || downloading) return
+
+    const gen = downloadGen.current + 1
+    downloadGen.current = gen
+    setDownloading(true)
+    setDownloadError(null)
+
+    try {
+      await downloadPhoto(originalUrl, photoDownloadName(photo.fileName, photo.id))
+    } catch {
+      if (downloadGen.current === gen) {
+        setDownloadError(DOWNLOAD_ERROR)
+      }
+    } finally {
+      if (downloadGen.current === gen) {
+        setDownloading(false)
+      }
+    }
   }
 
   return (
@@ -79,11 +115,26 @@ export function Lightbox({ photos, index, onClose, onIndex }: Props) {
           </button>
         </>
       ) : null}
-      {photo.fileUrl ? (
-        <img src={photo.fileUrl} alt={photo.fileName} onClick={(event) => event.stopPropagation()} />
+      {photoDisplayUrl(photo) ? (
+        <img src={photoDisplayUrl(photo)} alt={photo.fileName} onClick={(event) => event.stopPropagation()} />
       ) : (
         <p className="lightbox__empty">Bu görüntü önizlenemiyor</p>
       )}
+      {photoOriginalUrl(photo) || photoDisplayUrl(photo) ? (
+        <div className="lightbox__download-wrap" onClick={(event) => event.stopPropagation()}>
+          <button
+            className="lightbox__download"
+            type="button"
+            onClick={onDownload}
+            disabled={downloading}
+            aria-label="İndir"
+          >
+            <IconDownload size={16} />
+            {downloading ? 'İndiriliyor...' : 'İndir'}
+          </button>
+          {downloadError ? <p className="lightbox__download-error">{downloadError}</p> : null}
+        </div>
+      ) : null}
     </div>
   )
 }

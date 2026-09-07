@@ -2,6 +2,8 @@ export type Photo = {
   id: string
   fileName: string
   fileUrl: string
+  displayUrl?: string
+  originalUrl?: string
   createdAt: string
   isLocal?: boolean
 }
@@ -30,9 +32,13 @@ export type WeddingInfo = {
   address: string
   venueShort: string
   googleMapsUrl: string
+  pageTitle: string
+  downloadFilePrefix: string
   heroTitle: string
   heroTitleLines: [string, string]
   heroDescription: string
+  galleryTitle: string
+  galleryLead: string
   galleryEmpty: string
   memoriesEmpty: string
   memoryLead: string

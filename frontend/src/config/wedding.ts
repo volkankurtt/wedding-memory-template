@@ -1,53 +1,35 @@
-import img1 from '../assets/couple/1.jpg'
-import img2 from '../assets/couple/2.jpg'
-import img3 from '../assets/couple/3.jpg'
 import { coupleByFile } from '../assets/couple'
 import type { BackgroundImage, WeddingInfo } from '../types'
+import { weddingConfig } from './weddingConfig'
 
-const venueQuery = 'Anadolu Park Uğurlu Bahçe, Konak Serik Cd. Yan Yolu, Aksu, Antalya'
+const srcByFile: Record<string, string> = { ...coupleByFile }
 
-const backgroundSettings: Array<{
-  file: string
-  desktopPosition: string
-  mobilePosition: string
-}> = [
-  { file: '1.jpg', desktopPosition: 'center 46%', mobilePosition: 'center 18%' },
-  { file: '2.jpg', desktopPosition: 'center 40%', mobilePosition: 'center 14%' },
-  { file: '3.jpg', desktopPosition: 'center 44%', mobilePosition: 'center 16%' },
-  { file: '4.jpg', desktopPosition: 'center 42%', mobilePosition: 'center 18%' },
-  { file: '5.jpg', desktopPosition: 'center 42%', mobilePosition: 'center 18%' },
-]
-
-const srcByFile: Record<string, string> = {
-  '1.jpg': img1,
-  '2.jpg': img2,
-  '3.jpg': img3,
-  ...coupleByFile,
-}
-
-export const backgroundImages: BackgroundImage[] = backgroundSettings.flatMap((item) => {
+export const backgroundImages: BackgroundImage[] = weddingConfig.backgroundPhotos.flatMap((item) => {
   const src = srcByFile[item.file]
   if (!src) return []
   return [{ ...item, src }]
 })
 
 export const wedding: WeddingInfo = {
-  brideName: 'Gizem',
-  groomName: 'Alper',
-  weddingDate: '2026-09-11',
-  weddingTime: '19:00',
-  timezone: 'Europe/Istanbul',
-  venueName: 'Anadolu Park Uğurlu Bahçe',
-  address: 'Konak Serik Cd. Yan Yolu, 07112 Çıkışı, Aksu / Antalya',
-  venueShort: 'Aksu / Antalya',
-  googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(venueQuery)}`,
-  heroTitle: 'BU ANI BİRLİKTE ÖLÜMSÜZLEŞTİRELİM',
-  heroTitleLines: ['BU ANI BİRLİKTE', 'ÖLÜMSÜZLEŞTİRELİM'],
-  heroDescription:
-    'Bu gece objektifinize takılan güzel anları bizimle paylaşın. QR kodu okutun, fotoğraflarınızı yükleyin.',
-  galleryEmpty: 'Henüz fotoğraf yüklenmedi. İlk anıyı siz paylaşın.',
-  memoriesEmpty: 'Henüz anı bırakılmadı. İlk güzel mesajı siz yazın.',
-  memoryLead: 'Fotoğraflar günü gösterir, yazdıklarınız o günü hatırlatır.',
+  brideName: weddingConfig.brideName,
+  groomName: weddingConfig.groomName,
+  weddingDate: weddingConfig.weddingDate,
+  weddingTime: weddingConfig.weddingTime,
+  timezone: weddingConfig.timezone,
+  venueName: weddingConfig.venueName,
+  address: weddingConfig.address,
+  venueShort: weddingConfig.venueShort,
+  googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(weddingConfig.mapsQuery)}`,
+  pageTitle: weddingConfig.pageTitle,
+  downloadFilePrefix: weddingConfig.downloadFilePrefix,
+  heroTitle: weddingConfig.heroTitle,
+  heroTitleLines: [weddingConfig.heroTitleLines[0], weddingConfig.heroTitleLines[1]],
+  heroDescription: weddingConfig.heroDescription,
+  galleryTitle: weddingConfig.galleryTitle,
+  galleryLead: weddingConfig.galleryLead,
+  galleryEmpty: weddingConfig.galleryEmpty,
+  memoriesEmpty: weddingConfig.memoriesEmpty,
+  memoryLead: weddingConfig.memoryLead,
 }
 
 export const coupleNames = `${wedding.brideName} & ${wedding.groomName}`

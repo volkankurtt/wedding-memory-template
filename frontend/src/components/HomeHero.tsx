@@ -21,8 +21,8 @@ export function HomeHero({ onUpload, onShare }: Props) {
         </p>
 
         <h1 className="home-hero__title">
-          <span>BU ANI BİRLİKTE</span>
-          <span>ÖLÜMSÜZLEŞTİRELİM</span>
+          <span>{wedding.heroTitleLines[0]}</span>
+          <span>{wedding.heroTitleLines[1]}</span>
         </h1>
         <p className="home-hero__text">{wedding.heroDescription}</p>
 

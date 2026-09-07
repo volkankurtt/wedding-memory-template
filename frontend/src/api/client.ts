@@ -37,7 +37,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
     response = await fetch(`${API_BASE}${path}`, init)
-  } catch {
+  } catch (error) {
+    if (init?.signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+      throw error
+    }
     throw new ApiError(0, networkMessage())
   }
 
@@ -52,8 +55,51 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
-export function getPhotos(signal?: AbortSignal) {
-  return request<Photo[]>('/photos', { signal })
+export type PhotoPageResponse = {
+  photos: Photo[]
+  page: number
+  size: number
+  totalElements: number
+  totalPages: number
+  hasNext: boolean
+}
+
+export const PHOTO_PAGE_SIZE = 30
+
+function parsePhotoPage(data: unknown): PhotoPageResponse {
+  if (Array.isArray(data)) {
+    return {
+      photos: data as Photo[],
+      page: 0,
+      size: data.length,
+      totalElements: data.length,
+      totalPages: 1,
+      hasNext: false,
+    }
+  }
+  if (data && typeof data === 'object') {
+    const body = data as Record<string, unknown>
+    const list = body.photos ?? body.content
+    if (Array.isArray(list)) {
+      return {
+        photos: list as Photo[],
+        page: typeof body.page === 'number' ? body.page : 0,
+        size: typeof body.size === 'number' ? body.size : list.length,
+        totalElements: typeof body.totalElements === 'number' ? body.totalElements : list.length,
+        totalPages: typeof body.totalPages === 'number' ? body.totalPages : 1,
+        hasNext: Boolean(body.hasNext),
+      }
+    }
+  }
+  throw new ApiError(0, 'Sunucu yanıtı okunamadı. Lütfen tekrar deneyin.')
+}
+
+export async function getPhotos(options?: { page?: number; size?: number; signal?: AbortSignal }) {
+  const page = options?.page ?? 0
+  const size = options?.size ?? PHOTO_PAGE_SIZE
+  const params = new URLSearchParams({ page: String(page), size: String(size) })
+  const data = await request<unknown>(`/photos?${params}`, { signal: options?.signal })
+  return parsePhotoPage(data)
 }
 
 export function uploadPhoto(file: File) {

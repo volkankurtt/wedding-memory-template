@@ -1,3 +1,7 @@
+/**
+ * Çift fotoğraflarını buraya koyun: 1.jpg, 2.jpg, 3.jpg …
+ * Hangi dosyaların slaytta kullanılacağı `weddingConfig.backgroundPhotos` içindedir.
+ */
 const modules = import.meta.glob<string>('./*.{jpg,jpeg,png,webp,JPG,JPEG,PNG,WEBP}', {
   eager: true,
   import: 'default',

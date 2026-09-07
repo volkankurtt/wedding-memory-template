@@ -772,7 +772,7 @@ a {
   display: grid;
   place-items: center;
   background: rgba(28, 22, 18, 0.92);
-  padding: 3.4rem 0.8rem 1.2rem;
+  padding: 3.4rem 0.8rem 4.6rem;
 }
 
 .lightbox img {
@@ -815,6 +815,49 @@ a {
 
 .lightbox__nav--next {
   right: 0.4rem;
+}
+
+.lightbox__download-wrap {
+  position: absolute;
+  left: 50%;
+  bottom: max(0.7rem, env(safe-area-inset-bottom));
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  transform: translateX(-50%);
+}
+
+.lightbox__download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 44px;
+  padding: 0.35rem 1.05rem;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 500;
+  backdrop-filter: blur(8px);
+}
+
+.lightbox__download:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.lightbox__download-error {
+  margin: 0;
+  max-width: min(18rem, 86vw);
+  color: #f3d6c8;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-align: center;
 }
 
 .form-error {

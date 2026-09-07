@@ -1,9 +1,18 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { weddingConfig } from './src/config/weddingConfig.ts'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'wedding-html-title',
+      transformIndexHtml(html) {
+        return html.replaceAll('%PAGE_TITLE%', weddingConfig.pageTitle)
+      },
+    },
+  ],
   server: {
     watch: {
       usePolling: true,

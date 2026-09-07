@@ -67,6 +67,16 @@ export function IconPin({ size = 18, className }: IconProps) {
   )
 }
 
+export function IconDownload({ size = 16, className }: IconProps) {
+  return (
+    <Svg size={size} className={className}>
+      <path {...stroke} d="M12 4.5v10.2" />
+      <path {...stroke} d="m8.2 11.4 3.8 3.8 3.8-3.8" />
+      <path {...stroke} d="M5.2 18.4h13.6" />
+    </Svg>
+  )
+}
+
 export function IconArrowLeft({ size = 16, className }: IconProps) {
   return (
     <Svg size={size} className={className}>
