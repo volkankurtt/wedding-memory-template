@@ -32,11 +32,17 @@ final class JpegExifOrientation {
 	}
 
 	static int read(byte[] jpeg) {
-		int fromLibrary = readWithMetadataExtractor(jpeg);
-		if (fromLibrary != NORMAL) {
-			return fromLibrary;
+		try {
+			int fromLibrary = readWithMetadataExtractor(jpeg);
+			if (fromLibrary != NORMAL) {
+				return fromLibrary;
+			}
+			return readFromApp1(jpeg);
 		}
-		return readFromApp1(jpeg);
+		catch (Throwable ignored) {
+			// Canvas-reencoded JPEGs often have no EXIF. Missing/odd metadata is orientation 1.
+			return NORMAL;
+		}
 	}
 
 	private static int readWithMetadataExtractor(byte[] jpeg) {

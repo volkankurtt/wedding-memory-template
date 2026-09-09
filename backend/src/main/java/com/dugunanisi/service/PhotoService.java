@@ -331,7 +331,7 @@ public class PhotoService {
 		}
 		catch (ImageConversionException | StorageException exception) {
 			log.warn("Photo upload failed id={} status will be FAILED sinceStartMs={}: {}",
-					id, elapsedMs(started), exception.getMessage());
+					id, elapsedMs(started), exception.toString(), exception);
 			photo.markFailed();
 			photos.save(photo);
 			if (exception instanceof ImageConversionException) {

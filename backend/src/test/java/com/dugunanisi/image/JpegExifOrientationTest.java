@@ -36,6 +36,13 @@ class JpegExifOrientationTest {
 		assertThat(JpegExifOrientation.read(new byte[] { 1, 2, 3 })).isEqualTo(1);
 		assertThat(JpegExifOrientation.read(new byte[] { (byte) 0xFF, (byte) 0xD8, (byte) 0xFF })).isEqualTo(1);
 	}
+
+	@Test
+	void canvasReencodedJpegWithoutExifIsOrientation1() throws Exception {
+		byte[] canvasJpeg = OrientedJpegs.solidHalves(64, 32);
+		assertThat(JpegExifOrientation.read(canvasJpeg)).isEqualTo(1);
+		assertThat(JpegExifOrientation.readFromApp1(canvasJpeg)).isEqualTo(1);
+	}
 }
 
 final class OrientedJpegs {
@@ -73,6 +80,26 @@ final class OrientedJpegs {
 		System.arraycopy(xmp, 0, prefix, 0, xmp.length);
 		System.arraycopy(exif, 0, prefix, xmp.length, exif.length);
 		return insertAfterSoi(jpeg, prefix);
+	}
+
+	static byte[] withBrokenIccProfile(byte[] jpeg) {
+		byte[] icc = "ICC_PROFILE".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+		byte[] payload = new byte[icc.length + 2 + 128];
+		System.arraycopy(icc, 0, payload, 0, icc.length);
+		payload[icc.length] = 0;
+		payload[icc.length + 1] = 1;
+		payload[icc.length + 2] = 1;
+		byte[] cmyk = { 'C', 'M', 'Y', 'K' };
+		System.arraycopy(cmyk, 0, payload, icc.length + 2 + 16, 4);
+		payload[icc.length + 2 + 20] = 4;
+		byte[] app2 = new byte[4 + payload.length];
+		app2[0] = (byte) 0xFF;
+		app2[1] = (byte) 0xE2;
+		int length = payload.length + 2;
+		app2[2] = (byte) ((length >> 8) & 0xFF);
+		app2[3] = (byte) (length & 0xFF);
+		System.arraycopy(payload, 0, app2, 4, payload.length);
+		return insertAfterSoi(jpeg, app2);
 	}
 
 	private static byte[] insertAfterSoi(byte[] jpeg, byte[] segment) {

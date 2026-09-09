@@ -8,14 +8,18 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageInputStream;
 import javax.imageio.stream.ImageOutputStream;
 
 import org.slf4j.Logger;
@@ -55,6 +59,12 @@ public class ImageMagickImageConverter implements ImageConverter {
 				return jpeg;
 			}
 			catch (Exception exception) {
+				log.warn(
+						"Display conversion failed type={} file={} bytes={}",
+						type,
+						originalFileName,
+						original == null ? 0 : original.length,
+						exception);
 				throw new ImageConversionException("Fotoğraf görüntüye dönüştürülemedi.", exception);
 			}
 		}
@@ -125,7 +135,7 @@ public class ImageMagickImageConverter implements ImageConverter {
 
 	static byte[] resizeWithImageIo(byte[] original, DetectedImageType type, String originalFileName) throws IOException {
 		long started = System.nanoTime();
-		BufferedImage source = ImageIO.read(new ByteArrayInputStream(original));
+		BufferedImage source = type == DetectedImageType.JPEG ? readJpeg(original) : ImageIO.read(new ByteArrayInputStream(original));
 		if (source == null) {
 			throw new IOException("ImageIO could not read image");
 		}
@@ -133,7 +143,13 @@ public class ImageMagickImageConverter implements ImageConverter {
 		int originalHeight = source.getHeight();
 		int orientation = JpegExifOrientation.NORMAL;
 		if (type == DetectedImageType.JPEG) {
-			orientation = JpegExifOrientation.read(original);
+			try {
+				orientation = JpegExifOrientation.read(original);
+			}
+			catch (RuntimeException exception) {
+				log.warn("EXIF orientation unreadable, using 1 file={}: {}", originalFileName, exception.toString());
+				orientation = JpegExifOrientation.NORMAL;
+			}
 			source = applyExifOrientation(source, orientation);
 		}
 		int orientedWidth = source.getWidth();
@@ -180,6 +196,139 @@ public class ImageMagickImageConverter implements ImageConverter {
 
 	private static long elapsedMs(long startedNanos) {
 		return (System.nanoTime() - startedNanos) / 1_000_000L;
+	}
+
+	static BufferedImage readJpeg(byte[] jpeg) throws IOException {
+		byte[] withoutIcc = stripJpegIccApp2(jpeg);
+		if (withoutIcc != jpeg) {
+			log.info("Stripped ICC APP2 from JPEG before ImageIO originalBytes={} strippedBytes={}",
+					jpeg.length, withoutIcc.length);
+		}
+		BufferedImage image = tryImageIoRead(withoutIcc);
+		if (image != null) {
+			return image;
+		}
+		image = tryImageIoRead(jpeg);
+		if (image != null) {
+			return image;
+		}
+		image = tryImageReaderIgnoreMetadata(withoutIcc);
+		if (image != null) {
+			return image;
+		}
+		image = tryImageReaderIgnoreMetadata(jpeg);
+		if (image != null) {
+			return image;
+		}
+		throw new IOException("ImageIO could not read image");
+	}
+
+	private static BufferedImage tryImageIoRead(byte[] bytes) {
+		try {
+			return ImageIO.read(new ByteArrayInputStream(bytes));
+		}
+		catch (Exception exception) {
+			log.warn("ImageIO.read failed: {}", exception.toString());
+			return null;
+		}
+	}
+
+	private static BufferedImage tryImageReaderIgnoreMetadata(byte[] bytes) {
+		try (ImageInputStream stream = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
+			if (stream == null) {
+				return null;
+			}
+			Iterator<ImageReader> readers = ImageIO.getImageReaders(stream);
+			if (!readers.hasNext()) {
+				return null;
+			}
+			ImageReader reader = readers.next();
+			try {
+				reader.setInput(stream, true, true);
+				return reader.read(0);
+			}
+			finally {
+				reader.dispose();
+			}
+		}
+		catch (Exception exception) {
+			log.warn("JPEG ImageReader ignoreMetadata failed: {}", exception.toString());
+			return null;
+		}
+	}
+
+	static byte[] stripJpegIccApp2(byte[] jpeg) {
+		if (jpeg == null || jpeg.length < 4
+				|| (jpeg[0] & 0xFF) != 0xFF || (jpeg[1] & 0xFF) != 0xD8) {
+			return jpeg;
+		}
+		ByteArrayOutputStream out = new ByteArrayOutputStream(jpeg.length);
+		out.write(jpeg[0]);
+		out.write(jpeg[1]);
+		int index = 2;
+		boolean stripped = false;
+		while (index + 1 < jpeg.length) {
+			if ((jpeg[index] & 0xFF) != 0xFF) {
+				out.write(jpeg, index, jpeg.length - index);
+				break;
+			}
+			int markerStart = index;
+			while (index < jpeg.length && (jpeg[index] & 0xFF) == 0xFF) {
+				index++;
+			}
+			if (index >= jpeg.length) {
+				out.write(jpeg, markerStart, jpeg.length - markerStart);
+				break;
+			}
+			int marker = jpeg[index] & 0xFF;
+			index++;
+			if (marker == 0xDA) {
+				out.write(jpeg, markerStart, jpeg.length - markerStart);
+				break;
+			}
+			if (marker == 0xD9) {
+				out.write(0xFF);
+				out.write(marker);
+				break;
+			}
+			if (marker >= 0xD0 && marker <= 0xD7) {
+				out.write(0xFF);
+				out.write(marker);
+				continue;
+			}
+			if (index + 1 >= jpeg.length) {
+				out.write(jpeg, markerStart, jpeg.length - markerStart);
+				break;
+			}
+			int segmentLength = ((jpeg[index] & 0xFF) << 8) | (jpeg[index + 1] & 0xFF);
+			if (segmentLength < 2 || index + segmentLength > jpeg.length) {
+				out.write(jpeg, markerStart, jpeg.length - markerStart);
+				break;
+			}
+			int segmentEnd = index + segmentLength;
+			boolean iccApp2 = marker == 0xE2 && isIccProfileSegment(jpeg, index + 2, segmentLength - 2);
+			if (iccApp2) {
+				stripped = true;
+			}
+			else {
+				out.write(jpeg, markerStart, segmentEnd - markerStart);
+			}
+			index = segmentEnd;
+		}
+		return stripped ? out.toByteArray() : jpeg;
+	}
+
+	private static boolean isIccProfileSegment(byte[] jpeg, int offset, int length) {
+		byte[] prefix = "ICC_PROFILE".getBytes(StandardCharsets.US_ASCII);
+		if (length < prefix.length) {
+			return false;
+		}
+		for (int i = 0; i < prefix.length; i++) {
+			if (jpeg[offset + i] != prefix[i]) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	static BufferedImage applyExifOrientation(BufferedImage source, int orientation) {

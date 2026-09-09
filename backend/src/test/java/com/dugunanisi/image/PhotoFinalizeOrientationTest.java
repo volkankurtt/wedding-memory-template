@@ -25,6 +25,19 @@ class PhotoFinalizeOrientationTest {
 	private PhotoRepository photos;
 
 	@Test
+	void finalizeCanvasJpegWithoutExifWritesDisplay() throws Exception {
+		byte[] original = OrientedJpegs.solidHalves(64, 32);
+		assertThat(JpegExifOrientation.read(original)).isEqualTo(1);
+		assertOriginalUnchangedAfterFinalize(original);
+	}
+
+	@Test
+	void finalizeBrokenIccJpegWritesDisplay() throws Exception {
+		byte[] original = OrientedJpegs.withBrokenIccProfile(OrientedJpegs.solidHalves(64, 32));
+		assertOriginalUnchangedAfterFinalize(original);
+	}
+
+	@Test
 	void finalizeOrientation6KeepsOriginalBytes() throws Exception {
 		assertOriginalUnchangedAfterFinalize(OrientedJpegs.withOrientation(OrientedJpegs.solidHalves(64, 32), 6, true));
 	}
@@ -34,7 +47,7 @@ class PhotoFinalizeOrientationTest {
 		assertOriginalUnchangedAfterFinalize(OrientedJpegs.withOrientation(OrientedJpegs.solidHalves(64, 32), 8, false));
 	}
 
-	private void assertOriginalUnchangedAfterFinalize(byte[] original) {
+	private void assertOriginalUnchangedAfterFinalize(byte[] original) throws Exception {
 		InMemoryObjectStorage storage = new InMemoryObjectStorage();
 		AppProperties properties = new AppProperties();
 		properties.getSupabase().setUrl("https://example.supabase.co");
@@ -52,9 +65,11 @@ class PhotoFinalizeOrientationTest {
 
 		var response = service.finalizeUpload(id, uploadId);
 
+		assertThat(pending.getStatus()).isEqualTo(com.dugunanisi.domain.PhotoStatus.READY);
 		assertThat(storage.get(id + "/original")).isEqualTo(original);
 		assertThat(response.displayUrl()).endsWith("/display.jpg");
 		assertThat(response.originalUrl()).endsWith("/original");
 		assertThat(JpegExifOrientation.read(storage.get(id + "/display.jpg"))).isEqualTo(1);
+		assertThat(OrientedJpegs.read(storage.get(id + "/display.jpg"))).isNotNull();
 	}
 }

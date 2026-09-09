@@ -69,6 +69,35 @@ class ImageMagickImageConverterTest {
 	}
 
 	@Test
+	void canvasReencodedJpegWithoutExifProducesDisplay() throws Exception {
+		byte[] original = OrientedJpegs.solidHalves(64, 32);
+		assertThat(JpegExifOrientation.read(original)).isEqualTo(1);
+
+		byte[] display = converter().toDisplayJpeg(original, DetectedImageType.JPEG);
+		BufferedImage image = OrientedJpegs.read(display);
+
+		assertThat(image.getWidth()).isEqualTo(64);
+		assertThat(image.getHeight()).isEqualTo(32);
+		assertThat(OrientedJpegs.reddish(sample(image, 0.25, 0.5))).isTrue();
+		assertThat(OrientedJpegs.bluish(sample(image, 0.75, 0.5))).isTrue();
+		assertThat(JpegExifOrientation.read(display)).isEqualTo(1);
+	}
+
+	@Test
+	void jpegWithBrokenIccProfileStillProducesDisplay() throws Exception {
+		byte[] original = OrientedJpegs.withBrokenIccProfile(OrientedJpegs.solidHalves(64, 32));
+		assertThat(new ImageTypeDetector().detect(original)).isEqualTo(DetectedImageType.JPEG);
+
+		byte[] display = converter().toDisplayJpeg(original, DetectedImageType.JPEG);
+		BufferedImage image = OrientedJpegs.read(display);
+
+		assertThat(image.getWidth()).isEqualTo(64);
+		assertThat(image.getHeight()).isEqualTo(32);
+		assertThat(OrientedJpegs.reddish(sample(image, 0.25, 0.5))).isTrue();
+		assertThat(OrientedJpegs.bluish(sample(image, 0.75, 0.5))).isTrue();
+	}
+
+	@Test
 	void normalJpegKeepsPixelOrientation() throws Exception {
 		byte[] original = OrientedJpegs.solidHalves(64, 32);
 
