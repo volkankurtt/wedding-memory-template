@@ -114,13 +114,19 @@ describe('uploadPhotoWithRetry', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    await uploadPhotoWithRetry(new File([new Uint8Array([1, 2, 3])], 'a.jpg', { type: 'image/jpeg' }), 'upload-1')
+    const original = new File([new Uint8Array([1, 2, 3])], 'a.jpg', { type: 'image/jpeg' })
+    await uploadPhotoWithRetry(original, 'upload-1')
 
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(isBackendReady()).toBe(true)
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/photos/upload-session')
     const sessionInit = fetchMock.mock.calls[0][1]
-    expect(JSON.parse(String(sessionInit?.body))).toMatchObject({ clientUploadId: 'upload-1', fileName: 'a.jpg' })
+    expect(JSON.parse(String(sessionInit?.body))).toEqual({
+      clientUploadId: 'upload-1',
+      fileName: 'a.jpg',
+      contentType: 'image/jpeg',
+      sizeBytes: original.size,
+    })
     expect(String(fetchMock.mock.calls[1][0])).toContain('https://storage.example/sign/p1')
     expect(String(fetchMock.mock.calls[1][0])).toContain('token=tok')
     expect(fetchMock.mock.calls[1][1]?.method).toBe('PUT')

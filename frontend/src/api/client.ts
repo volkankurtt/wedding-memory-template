@@ -1,5 +1,4 @@
 import type { Memory, Photo } from '../types'
-import { optimizeJpegForUpload } from '../utils/optimizeJpegForUpload'
 import { markBackendReady } from './backendReadyState'
 
 function nowMs() {
@@ -245,11 +244,10 @@ async function uploadPhotoDirect(file: File, uploadId: string, options?: UploadP
     } catch {
       host = ''
     }
-    console.info('[dugun-anisi] directStorageUpload', {
+    console.info('[dugun-anisi] directStorageUploadMs', {
       uploadId,
       host,
       bytes: file.size,
-      optimizedFileSize: file.size,
       ms: storageMs,
       mbPerSec: seconds > 0 ? Number((file.size / 1048576 / seconds).toFixed(2)) : 0,
     })
@@ -331,16 +329,9 @@ export async function waitForApi(options?: WaitForApiOptions) {
 
 export async function uploadPhotoWithRetry(file: File, uploadId: string, options?: UploadPhotoOptions) {
   const totalStarted = nowMs()
-  const prepared = await optimizeJpegForUpload(file)
-  console.info('[dugun-anisi] jpegOptimize', {
+  console.info('[dugun-anisi] originalFileSize', {
     uploadId,
-    originalFileSize: prepared.originalFileSize,
-    optimizedFileSize: prepared.optimizedFileSize,
-    compressionMs: prepared.compressionMs,
-    compressionRatio: prepared.originalFileSize
-      ? prepared.optimizedFileSize / prepared.originalFileSize
-      : 1,
-    skipped: prepared.skipped,
+    originalFileSize: file.size,
   })
 
   const logTotal = () => {
@@ -353,13 +344,13 @@ export async function uploadPhotoWithRetry(file: File, uploadId: string, options
   }
 
   try {
-    const photo = await uploadPhotoDirect(prepared.file, uploadId, options)
+    const photo = await uploadPhotoDirect(file, uploadId, options)
     markBackendReady()
     logTotal()
     return photo
   } catch (error) {
     if (!isTransientUploadError(error)) throw error
-    const photo = await uploadPhotoDirect(prepared.file, uploadId, options)
+    const photo = await uploadPhotoDirect(file, uploadId, options)
     markBackendReady()
     logTotal()
     return photo
