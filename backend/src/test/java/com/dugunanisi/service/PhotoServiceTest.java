@@ -41,6 +41,7 @@ import com.dugunanisi.image.ImageConverter;
 import com.dugunanisi.image.ImageTypeDetector;
 import com.dugunanisi.storage.ObjectStorage;
 import com.dugunanisi.storage.SignedUpload;
+import com.dugunanisi.storage.StorageException;
 import com.dugunanisi.support.TestImages;
 
 @ExtendWith(MockitoExtension.class)
@@ -309,7 +310,7 @@ class PhotoServiceTest {
 		String uploadId = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 		Photo pending = new Photo(id, "a.jpg", "image/jpeg", 10, id + "/original", uploadId);
 		when(photos.findById(id)).thenReturn(Optional.of(pending));
-		when(storage.exists(id + "/original")).thenReturn(false);
+		when(storage.get(id + "/original")).thenThrow(new StorageException("Fotoğraf depoda bulunamadı."));
 
 		assertThatThrownBy(() -> service.finalizeUpload(id, uploadId))
 				.isInstanceOf(ApiException.class)
@@ -324,7 +325,6 @@ class PhotoServiceTest {
 		String uploadId = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 		Photo pending = new Photo(id, "a.jpg", "image/jpeg", TestImages.JPEG.length, id + "/original", uploadId);
 		when(photos.findById(id)).thenReturn(Optional.of(pending));
-		when(storage.exists(id + "/original")).thenReturn(true);
 		when(storage.get(id + "/original")).thenReturn(TestImages.JPEG);
 		when(converter.toDisplayJpeg(eq(TestImages.JPEG), eq(DetectedImageType.JPEG), any()))
 				.thenReturn(TestImages.JPEG);

@@ -9,6 +9,11 @@ spring:
     url: ${SUPABASE_DB_URL}
     username: ${SUPABASE_DB_USER}
     password: ${SUPABASE_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 8
+      minimum-idle: 1
+      connection-timeout: 8000
+      keepalive-time: 30000
   jpa:
     open-in-view: false
     hibernate:

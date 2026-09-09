@@ -150,6 +150,8 @@ public class PhotoService {
 
 	@Transactional
 	public UploadSessionResponse createUploadSession(CreateUploadSessionRequest request) {
+		long started = System.nanoTime();
+		log.info("upload-session entered");
 		if (request == null) {
 			throw new ApiException(HttpStatus.BAD_REQUEST, "Yükleme isteği işlenemedi.");
 		}
@@ -167,9 +169,13 @@ public class PhotoService {
 			throw unsupportedType();
 		}
 
+		long lookupStarted = System.nanoTime();
 		Optional<Photo> existing = photos.findByClientUploadId(uploadKey);
+		log.info("upload-session dbLookupMs={} uploadId={}", elapsedMs(lookupStarted), uploadKey);
 		if (existing.isPresent()) {
-			return sessionForExisting(existing.get(), uploadKey);
+			UploadSessionResponse replay = sessionForExisting(existing.get(), uploadKey);
+			log.info("upload-session responseSentMs={} uploadId={} replay=true", elapsedMs(started), uploadKey);
+			return replay;
 		}
 
 		UUID id = UUID.randomUUID();
@@ -179,25 +185,34 @@ public class PhotoService {
 				? "application/octet-stream"
 				: request.contentType();
 		Photo photo;
+		long insertStarted = System.nanoTime();
 		try {
 			photo = photos.save(new Photo(id, fileName, contentType, request.sizeBytes(), originalPath, uploadKey));
+			log.info("upload-session dbInsertMs={} id={}", elapsedMs(insertStarted), id);
 		}
 		catch (DataIntegrityViolationException exception) {
 			Photo raced = photos.findByClientUploadId(uploadKey).orElseThrow(() -> exception);
-			return sessionForExisting(raced, uploadKey);
+			UploadSessionResponse replay = sessionForExisting(raced, uploadKey);
+			log.info("upload-session responseSentMs={} uploadId={} replay=true", elapsedMs(started), uploadKey);
+			return replay;
 		}
-		return signedSession(photo, uploadKey);
+		UploadSessionResponse response = signedSession(photo, uploadKey);
+		log.info("upload-session responseSentMs={} id={} uploadId={}", elapsedMs(started), id, uploadKey);
+		return response;
 	}
 
 	@Transactional
 	public PhotoResponse finalizeUpload(UUID photoId, String clientUploadId) {
 		long started = System.nanoTime();
+		log.info("finalize entered id={}", photoId);
 		String uploadKey = parseUploadId(clientUploadId);
 		if (uploadKey == null) {
 			throw new ApiException(HttpStatus.BAD_REQUEST, "Yükleme isteği işlenemedi.");
 		}
+		long lookupStarted = System.nanoTime();
 		Photo photo = photos.findById(photoId)
 				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Fotoğraf bulunamadı."));
+		log.info("finalize dbLookupMs={} id={}", elapsedMs(lookupStarted), photoId);
 		if (photo.getClientUploadId() == null || !uploadKey.equals(photo.getClientUploadId())) {
 			throw new ApiException(HttpStatus.BAD_REQUEST, "Yükleme isteği işlenemedi.");
 		}
@@ -207,9 +222,6 @@ public class PhotoService {
 		}
 
 		String originalPath = photo.getStoragePath();
-		if (!storage.exists(originalPath)) {
-			throw new ApiException(HttpStatus.BAD_REQUEST, "Fotoğraf henüz yüklenmedi. Lütfen tekrar deneyin.");
-		}
 		byte[] bytes;
 		try {
 			bytes = storage.get(originalPath);
@@ -217,16 +229,27 @@ public class PhotoService {
 		catch (StorageException exception) {
 			throw new ApiException(HttpStatus.BAD_REQUEST, "Fotoğraf henüz yüklenmedi. Lütfen tekrar deneyin.");
 		}
+		boolean jpegMagic = bytes.length >= 3
+				&& (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8 && (bytes[2] & 0xFF) == 0xFF;
+		log.info("finalize originalBytes={} jpegMagic={} id={}", bytes.length, jpegMagic, photoId);
 		if (bytes.length > MAX_FILE_SIZE_BYTES) {
 			throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE, "Dosya 25 MB sınırını aşıyor.");
 		}
 		DetectedImageType type = detector.detect(bytes);
 		if (type == null) {
+			log.warn("finalize magic-byte reject id={} bytes={} b0={} b1={} b2={}",
+					photoId,
+					bytes.length,
+					bytes.length > 0 ? bytes[0] : 0,
+					bytes.length > 1 ? bytes[1] : 0,
+					bytes.length > 2 ? bytes[2] : 0);
 			photo.markFailed();
 			photos.save(photo);
 			throw unsupportedType();
 		}
-		return storeAndComplete(photo, bytes, type, started, false);
+		PhotoResponse response = storeAndComplete(photo, bytes, type, started, false);
+		log.info("finalize responseSentMs={} id={}", elapsedMs(started), photoId);
+		return response;
 	}
 
 	private UploadSessionResponse sessionForExisting(Photo photo, String uploadKey) {
@@ -260,11 +283,16 @@ public class PhotoService {
 	}
 
 	private UploadSessionResponse signedSession(Photo photo, String uploadKey) {
+		long signedStarted = System.nanoTime();
 		try {
 			SignedUpload signed = storage.createSignedUpload(
 					photo.getStoragePath(),
 					photo.getContentType(),
 					Duration.ofSeconds(SIGNED_UPLOAD_TTL_SECONDS));
+			log.info("upload-session signedUrlMs={} id={} host={}",
+					elapsedMs(signedStarted),
+					photo.getId(),
+					hostOf(signed.signedUrl()));
 			return new UploadSessionResponse(
 					photo.getId(),
 					uploadKey,
@@ -330,7 +358,7 @@ public class PhotoService {
 			return response;
 		}
 		catch (ImageConversionException | StorageException exception) {
-			log.warn("Photo upload failed id={} status will be FAILED sinceStartMs={}: {}",
+			log.error("Photo upload failed id={} status will be FAILED sinceStartMs={}: {}",
 					id, elapsedMs(started), exception.toString(), exception);
 			photo.markFailed();
 			photos.save(photo);
@@ -378,5 +406,20 @@ public class PhotoService {
 
 	private static long elapsedMs(long startedNanos) {
 		return (System.nanoTime() - startedNanos) / 1_000_000L;
+	}
+
+	private static String hostOf(String url) {
+		if (url == null || url.isBlank()) {
+			return "";
+		}
+		int scheme = url.indexOf("://");
+		if (scheme < 0) {
+			return "";
+		}
+		int start = scheme + 3;
+		int slash = url.indexOf('/', start);
+		String host = slash < 0 ? url.substring(start) : url.substring(start, slash);
+		int colon = host.indexOf(':');
+		return colon < 0 ? host : host.substring(0, colon);
 	}
 }

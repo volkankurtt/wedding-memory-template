@@ -214,12 +214,18 @@ async function uploadPhotoDirect(file: File, uploadId: string, options?: UploadP
   const sessionStarted = nowMs()
   options?.onPhase?.('session')
   const session = await createUploadSession(file, uploadId)
-  if (import.meta.env.DEV) {
-    console.info('[dugun-anisi] uploadSessionMs', {
-      uploadId,
-      ms: Math.round(nowMs() - sessionStarted),
-    })
+  let sessionHost = ''
+  try {
+    sessionHost = session.signedUrl ? new URL(session.signedUrl).hostname : ''
+  } catch {
+    sessionHost = ''
   }
+  console.info('[dugun-anisi] uploadSession', {
+    uploadId,
+    ms: Math.round(nowMs() - sessionStarted),
+    host: sessionHost,
+    needsUpload: session.needsUpload,
+  })
   if (session.alreadyReady && session.photo) {
     options?.onPhase?.('ready')
     return session.photo
@@ -231,13 +237,22 @@ async function uploadPhotoDirect(file: File, uploadId: string, options?: UploadP
     options?.onPhase?.('storage')
     const storageStarted = nowMs()
     await putOriginalToStorage(file, session.signedUrl, session.token)
-    if (import.meta.env.DEV) {
-      console.info('[dugun-anisi] directStorageUploadMs', {
-        uploadId,
-        ms: Math.round(nowMs() - storageStarted),
-        bytes: file.size,
-      })
+    const storageMs = Math.round(nowMs() - storageStarted)
+    const seconds = storageMs / 1000
+    let host = ''
+    try {
+      host = new URL(session.signedUrl).hostname
+    } catch {
+      host = ''
     }
+    console.info('[dugun-anisi] directStorageUpload', {
+      uploadId,
+      host,
+      bytes: file.size,
+      optimizedFileSize: file.size,
+      ms: storageMs,
+      mbPerSec: seconds > 0 ? Number((file.size / 1048576 / seconds).toFixed(2)) : 0,
+    })
   }
   options?.onPhase?.('preparing')
   const finalizeStarted = nowMs()
@@ -317,18 +332,16 @@ export async function waitForApi(options?: WaitForApiOptions) {
 export async function uploadPhotoWithRetry(file: File, uploadId: string, options?: UploadPhotoOptions) {
   const totalStarted = nowMs()
   const prepared = await optimizeJpegForUpload(file)
-  if (import.meta.env.DEV) {
-    console.info('[dugun-anisi] jpegOptimize', {
-      uploadId,
-      originalFileSize: prepared.originalFileSize,
-      optimizedFileSize: prepared.optimizedFileSize,
-      compressionMs: prepared.compressionMs,
-      compressionRatio: prepared.originalFileSize
-        ? prepared.optimizedFileSize / prepared.originalFileSize
-        : 1,
-      skipped: prepared.skipped,
-    })
-  }
+  console.info('[dugun-anisi] jpegOptimize', {
+    uploadId,
+    originalFileSize: prepared.originalFileSize,
+    optimizedFileSize: prepared.optimizedFileSize,
+    compressionMs: prepared.compressionMs,
+    compressionRatio: prepared.originalFileSize
+      ? prepared.optimizedFileSize / prepared.originalFileSize
+      : 1,
+    skipped: prepared.skipped,
+  })
 
   const logTotal = () => {
     if (import.meta.env.DEV) {

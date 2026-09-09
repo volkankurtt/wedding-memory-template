@@ -2,6 +2,8 @@ package com.dugunanisi.api;
 
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -13,9 +15,21 @@ import org.springframework.web.multipart.MultipartException;
 @RestControllerAdvice
 public class ApiExceptionHandler {
 
+	private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
+
 	@ExceptionHandler(ApiException.class)
 	public ResponseEntity<Map<String, String>> handleApi(ApiException exception) {
+		if (exception.getStatus().is5xxServerError()) {
+			log.error("API {} {}", exception.getStatus().value(), exception.getMessage(), exception);
+		}
 		return ResponseEntity.status(exception.getStatus()).body(Map.of("error", exception.getMessage()));
+	}
+
+	@ExceptionHandler(Exception.class)
+	public ResponseEntity<Map<String, String>> handleUnknown(Exception exception) {
+		log.error("Unhandled server error", exception);
+		return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+				.body(Map.of("error", "Fotoğraf görüntüye dönüştürülemedi. Lütfen tekrar deneyin."));
 	}
 
 	@ExceptionHandler(HttpMessageNotReadableException.class)

@@ -35,7 +35,12 @@ public class ImageMagickImageConverter implements ImageConverter {
 	static final float JPEG_QUALITY = 0.85f;
 	private static final int MAGICK_TIMEOUT_SECONDS = 45;
 
+	private static final Object IMAGE_IO_LOCK = new Object();
 	private static final Logger log = LoggerFactory.getLogger(ImageMagickImageConverter.class);
+
+	static {
+		ImageIO.setUseCache(false);
+	}
 
 	private final String magickCommand;
 
@@ -59,7 +64,7 @@ public class ImageMagickImageConverter implements ImageConverter {
 				return jpeg;
 			}
 			catch (Exception exception) {
-				log.warn(
+				log.error(
 						"Display conversion failed type={} file={} bytes={}",
 						type,
 						originalFileName,
@@ -134,11 +139,18 @@ public class ImageMagickImageConverter implements ImageConverter {
 	}
 
 	static byte[] resizeWithImageIo(byte[] original, DetectedImageType type, String originalFileName) throws IOException {
+		synchronized (IMAGE_IO_LOCK) {
+			return resizeWithImageIoLocked(original, type, originalFileName);
+		}
+	}
+
+	private static byte[] resizeWithImageIoLocked(byte[] original, DetectedImageType type, String originalFileName) throws IOException {
 		long started = System.nanoTime();
 		BufferedImage source = type == DetectedImageType.JPEG ? readJpeg(original) : ImageIO.read(new ByteArrayInputStream(original));
 		if (source == null) {
 			throw new IOException("ImageIO could not read image");
 		}
+		long readMs = elapsedMs(started);
 		int originalWidth = source.getWidth();
 		int originalHeight = source.getHeight();
 		int orientation = JpegExifOrientation.NORMAL;
@@ -152,6 +164,7 @@ public class ImageMagickImageConverter implements ImageConverter {
 			}
 			source = applyExifOrientation(source, orientation);
 		}
+		long orientMs = elapsedMs(started);
 		int orientedWidth = source.getWidth();
 		int orientedHeight = source.getHeight();
 		int width = orientedWidth;
@@ -178,7 +191,7 @@ public class ImageMagickImageConverter implements ImageConverter {
 		byte[] jpeg = writeJpeg(rgb);
 		if (type == DetectedImageType.JPEG) {
 			log.info(
-					"JPEG display file={} contentType={} orientation={} original={}x{} afterOrientation={}x{} display={}x{} displayBytes={} totalMs={}",
+					"JPEG display file={} contentType={} orientation={} original={}x{} afterOrientation={}x{} display={}x{} displayBytes={} readMs={} orientMs={} encodeMs={} totalMs={}",
 					originalFileName,
 					type.contentType(),
 					orientation,
@@ -189,6 +202,9 @@ public class ImageMagickImageConverter implements ImageConverter {
 					targetW,
 					targetH,
 					jpeg.length,
+					readMs,
+					orientMs,
+					elapsedMs(started) - orientMs,
 					elapsedMs(started));
 		}
 		return jpeg;

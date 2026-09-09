@@ -31,7 +31,8 @@ public class SupabaseObjectStorage implements ObjectStorage {
 	public void put(String objectPath, byte[] bytes, String contentType) {
 		assertConfigured();
 		long started = System.nanoTime();
-		log.info("Storage PUT start path={} bytes={} type={}", objectPath, bytes.length, contentType);
+		log.info("Storage PUT start path={} bytes={} type={} host={}",
+				objectPath, bytes.length, contentType, hostOf(objectUri(objectPath)));
 		try {
 			restClient.put()
 					.uri(objectUri(objectPath))
@@ -41,7 +42,7 @@ public class SupabaseObjectStorage implements ObjectStorage {
 					.body(bytes)
 					.retrieve()
 					.toBodilessEntity();
-			log.info("Storage PUT done path={} ms={}", objectPath, elapsedMs(started));
+			log.info("Storage PUT done path={} bytes={} ms={}", objectPath, bytes.length, elapsedMs(started));
 		}
 		catch (RestClientResponseException exception) {
 			log.warn("Storage PUT failed path={} status={} body={} ms={}",
@@ -84,6 +85,8 @@ public class SupabaseObjectStorage implements ObjectStorage {
 	@Override
 	public byte[] get(String objectPath) {
 		assertConfigured();
+		long started = System.nanoTime();
+		log.info("Storage GET start path={} host={}", objectPath, hostOf(objectUri(objectPath)));
 		try {
 			byte[] body = restClient.get()
 					.uri(objectUri(objectPath))
@@ -93,15 +96,19 @@ public class SupabaseObjectStorage implements ObjectStorage {
 			if (body == null) {
 				throw new StorageException("Fotoğraf depoda bulunamadı.");
 			}
+			log.info("Storage GET done path={} bytes={} ms={}", objectPath, body.length, elapsedMs(started));
 			return body;
 		}
 		catch (RestClientResponseException exception) {
+			log.warn("Storage GET failed path={} status={} ms={}",
+					objectPath, exception.getStatusCode().value(), elapsedMs(started));
 			if (exception.getStatusCode().value() == 404) {
 				throw new StorageException("Fotoğraf depoda bulunamadı.", exception);
 			}
 			throw new StorageException("Fotoğraf okunamadı.", exception);
 		}
 		catch (RestClientException exception) {
+			log.warn("Storage GET failed path={} ms={}: {}", objectPath, elapsedMs(started), exception.toString());
 			throw new StorageException("Fotoğraf okunamadı.", exception);
 		}
 	}
@@ -109,10 +116,13 @@ public class SupabaseObjectStorage implements ObjectStorage {
 	@Override
 	public SignedUpload createSignedUpload(String objectPath, String contentType, Duration ttl) {
 		assertConfigured();
+		long started = System.nanoTime();
+		String signUri = signUploadUri(objectPath);
+		log.info("signedUpload start path={} host={}", objectPath, hostOf(signUri));
 		try {
 			@SuppressWarnings("unchecked")
 			Map<String, Object> body = restClient.post()
-					.uri(signUploadUri(objectPath))
+					.uri(signUri)
 					.headers(this::applyServiceRole)
 					.contentType(MediaType.APPLICATION_JSON)
 					.body(Map.of())
@@ -122,12 +132,12 @@ public class SupabaseObjectStorage implements ObjectStorage {
 				throw new StorageException("Yükleme adresi üretilemedi.");
 			}
 			String rawUrl = String.valueOf(body.get("url"));
-			String signedUrl = toAbsoluteStorageUrl(rawUrl);
+			String signedUrl = StorageHostnames.rewriteToDedicatedStorage(toAbsoluteStorageUrl(rawUrl));
 			String token = tokenFrom(signedUrl, body.get("token"));
 			if (token == null || token.isBlank()) {
 				throw new StorageException("Yükleme adresi üretilemedi.");
 			}
-			log.info("Signed upload created path={}", objectPath);
+			log.info("signedUpload done path={} host={} ms={}", objectPath, hostOf(signedUrl), elapsedMs(started));
 			return new SignedUpload(signedUrl, token, 2 * 60 * 60);
 		}
 		catch (StorageException exception) {
@@ -188,7 +198,7 @@ public class SupabaseObjectStorage implements ObjectStorage {
 	}
 
 	private String storageBase() {
-		return trimSlash(supabase.getUrl()) + "/storage/v1";
+		return StorageHostnames.dedicatedStorageOrigin(supabase.getUrl()) + "/storage/v1";
 	}
 
 	private String toAbsoluteStorageUrl(String rawUrl) {
@@ -199,6 +209,16 @@ public class SupabaseObjectStorage implements ObjectStorage {
 			return storageBase() + rawUrl;
 		}
 		return storageBase() + "/" + rawUrl;
+	}
+
+	private static String hostOf(String url) {
+		try {
+			String host = URI.create(url).getHost();
+			return host == null ? "" : host;
+		}
+		catch (IllegalArgumentException exception) {
+			return "";
+		}
 	}
 
 	private static String tokenFrom(String signedUrl, Object tokenField) {

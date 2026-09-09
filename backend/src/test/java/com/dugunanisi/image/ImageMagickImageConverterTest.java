@@ -199,6 +199,34 @@ class ImageMagickImageConverterTest {
 	}
 
 	@Test
+	void concurrentJpegFinalizeDoesNotFail() throws Exception {
+		byte[] original = OrientedJpegs.solidHalves(96, 64);
+		var converter = converter();
+		var errors = new java.util.concurrent.CopyOnWriteArrayList<Throwable>();
+		var threads = new Thread[8];
+		for (int i = 0; i < threads.length; i++) {
+			threads[i] = new Thread(() -> {
+				try {
+					byte[] display = converter.toDisplayJpeg(original, DetectedImageType.JPEG);
+					if (display.length < 3 || display[0] != (byte) 0xFF) {
+						errors.add(new AssertionError("invalid jpeg"));
+					}
+				}
+				catch (Throwable error) {
+					errors.add(error);
+				}
+			});
+		}
+		for (Thread thread : threads) {
+			thread.start();
+		}
+		for (Thread thread : threads) {
+			thread.join();
+		}
+		assertThat(errors).isEmpty();
+	}
+
+	@Test
 	void unreadableJpegFailsFastWithoutMagick() {
 		byte[] brokenJpeg = new byte[] { (byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0, 1, 2, 3, 4, 5, 6, 7, 8 };
 
