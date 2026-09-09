@@ -2,7 +2,6 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -26,6 +25,7 @@ type GuestState = {
   prependPhotos: (photos: Photo[]) => void
   prependMemory: (memory: Memory) => void
   ensurePhotosLoaded: () => void
+  ensureMemoriesLoaded: () => void
   loadMorePhotos: () => void
   retryPhotosPage: () => void
 }
@@ -51,31 +51,33 @@ export function GuestStateProvider({ children }: { children: ReactNode }) {
   const [photosHydrated, setPhotosHydrated] = useState(false)
   const [photosError, setPhotosError] = useState<string | null>(null)
   const [photosPageError, setPhotosPageError] = useState<string | null>(null)
-  const [memoriesLoading, setMemoriesLoading] = useState(true)
+  const [memoriesLoading, setMemoriesLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const nextPageRef = useRef(0)
   const hasNextRef = useRef(true)
   const inFlightPageRef = useRef<number | null>(null)
+  const memoriesHydratedRef = useRef(false)
+  const memoriesInFlightRef = useRef(false)
 
-  useEffect(() => {
-    const abort = new AbortController()
+  const ensureMemoriesLoaded = useCallback(() => {
+    if (memoriesHydratedRef.current || memoriesInFlightRef.current) return
+    memoriesInFlightRef.current = true
+    setMemoriesLoading(true)
+    setLoadError(null)
 
-    async function loadMemories() {
-      setLoadError(null)
-      try {
-        const items = await getMemories(abort.signal)
-        if (abort.signal.aborted) return
+    void getMemories()
+      .then((items) => {
         markBackendReady()
         setMemories(items)
-      } catch (error) {
-        if (!abort.signal.aborted) setLoadError(toUserMessage(error))
-      } finally {
-        if (!abort.signal.aborted) setMemoriesLoading(false)
-      }
-    }
-
-    void loadMemories()
-    return () => abort.abort()
+      })
+      .catch((error) => {
+        setLoadError(toUserMessage(error))
+      })
+      .finally(() => {
+        memoriesInFlightRef.current = false
+        memoriesHydratedRef.current = true
+        setMemoriesLoading(false)
+      })
   }, [])
 
   const loadPhotoPage = useCallback(async (page: number) => {
@@ -149,6 +151,7 @@ export function GuestStateProvider({ children }: { children: ReactNode }) {
       prependPhotos,
       prependMemory,
       ensurePhotosLoaded,
+      ensureMemoriesLoaded,
       loadMorePhotos,
       retryPhotosPage,
     }),
@@ -166,6 +169,7 @@ export function GuestStateProvider({ children }: { children: ReactNode }) {
       prependPhotos,
       prependMemory,
       ensurePhotosLoaded,
+      ensureMemoriesLoaded,
       loadMorePhotos,
       retryPhotosPage,
     ],

@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useGuestState } from '../context/GuestState'
 import { wedding } from '../config/wedding'
 
@@ -11,26 +12,35 @@ function formatWhen(iso: string) {
 }
 
 type Props = {
-  onWrite: () => void
+  onWrite?: () => void
+  showList?: boolean
 }
 
-export function MemoryBook({ onWrite }: Props) {
-  const { memories, memoriesLoading, loadError } = useGuestState()
+export function MemoryBook({ onWrite, showList = false }: Props) {
+  const { memories, memoriesLoading, loadError, ensureMemoriesLoaded } = useGuestState()
+
+  useEffect(() => {
+    if (showList) ensureMemoriesLoaded()
+  }, [showList, ensureMemoriesLoaded])
 
   return (
     <section className="memory-band" id="memories">
       <p className="eyebrow">Anı Defteri</p>
       <h2 className="memory-band__title">Misafir notları</h2>
       <p className="memory-band__lead">{wedding.memoryLead}</p>
-      <button className="btn btn--warm" type="button" onClick={onWrite}>
-        Anı Bırak
-      </button>
-      {loadError ? <p className="form-error">{loadError}</p> : null}
-      {memoriesLoading && memories.length === 0 ? (
+      {onWrite ? (
+        <button className="btn btn--warm" type="button" onClick={onWrite}>
+          Anı Bırak
+        </button>
+      ) : null}
+      {showList && loadError ? <p className="form-error">{loadError}</p> : null}
+      {showList && memoriesLoading && memories.length === 0 ? (
         <p className="memory-band__empty">Notlar yükleniyor…</p>
-      ) : memories.length === 0 ? (
+      ) : null}
+      {showList && !memoriesLoading && memories.length === 0 && !loadError ? (
         <p className="memory-band__empty">{wedding.memoriesEmpty}</p>
-      ) : (
+      ) : null}
+      {showList && memories.length > 0 ? (
         <ul className="memory-notes">
           {memories.map((memory) => (
             <li className="memory-card" key={memory.id}>
@@ -42,7 +52,7 @@ export function MemoryBook({ onWrite }: Props) {
             </li>
           ))}
         </ul>
-      )}
+      ) : null}
     </section>
   )
 }

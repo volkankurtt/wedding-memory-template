@@ -5,6 +5,7 @@ import { BackgroundSlider } from './components/BackgroundSlider'
 import { GuestStateProvider } from './context/GuestState'
 import { GalleryPage } from './pages/GalleryPage'
 import { HomePage } from './pages/HomePage'
+import { NotlarPage } from './pages/NotlarPage'
 import { UploadPage } from './pages/UploadPage'
 
 export default function App() {
@@ -19,7 +20,9 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<HomePage />} />
-            <Route path="/gallery" element={<GalleryPage />} />
+            <Route path="/fotograflar" element={<GalleryPage />} />
+            <Route path="/gallery" element={<Navigate to="/fotograflar" replace />} />
+            <Route path="/notlar" element={<NotlarPage />} />
             <Route path="/upload" element={<UploadPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -1,7 +1,6 @@
-import { Link } from 'react-router-dom'
 import { coupleNames, formatWeddingDate, wedding } from '../config/wedding'
 import { HeroCountdown } from './HeroCountdown'
-import { IconCamera, IconGallery, IconHeart, IconPin } from './Icons'
+import { IconCamera, IconHeart, IconPin } from './Icons'
 
 type Props = {
   onUpload: () => void
@@ -33,10 +32,6 @@ export function HomeHero({ onUpload, onShare }: Props) {
             <IconCamera className="btn-ico" size={18} />
             Fotoğraf Yükle
           </button>
-          <Link className="btn btn--glass" to="/gallery">
-            <IconGallery className="btn-ico" size={18} />
-            Anıları Gör
-          </Link>
         </div>
 
         <div className="home-venue">

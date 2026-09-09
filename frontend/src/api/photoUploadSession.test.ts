@@ -11,6 +11,7 @@ import {
   canViewUploadedPhotos,
   failedUploadItems,
   pendingUploadItems,
+  photoUploadThankYouMessage,
   runPhotoUploadSession,
 } from './photoUploadSession'
 
@@ -306,7 +307,7 @@ describe('runPhotoUploadSession', () => {
     expect(failedUploadItems(queue).map((item) => item.id)).toEqual(['bad'])
   })
 
-  it('shows gallery cta only when uploads finished with at least one success', () => {
+  it('shows thank-you state when uploads finished with at least one success', () => {
     const mixed = [
       { id: 'ok', status: 'SUCCESS' },
       { id: 'bad', status: 'FAILED' },
@@ -317,6 +318,15 @@ describe('runPhotoUploadSession', () => {
     expect(canViewUploadedPhotos([{ id: 'a', status: 'FAILED' }], false)).toBe(false)
     expect(canViewUploadedPhotos([{ id: 'a', status: 'UPLOADING' }], false)).toBe(false)
     expect(canViewUploadedPhotos([], false)).toBe(false)
+  })
+
+  it('uses singular thank-you copy for one photo and plural for several', () => {
+    expect(photoUploadThankYouMessage(1)).toBe(
+      'Fotoğrafınız çiftimize ulaştı. Bu güzel anıyı bizimle paylaştığınız için teşekkür ederiz.',
+    )
+    expect(photoUploadThankYouMessage(2)).toBe(
+      'Fotoğraflarınız çiftimize ulaştı. Bu güzel anıları bizimle paylaştığınız için teşekkür ederiz.',
+    )
   })
 })
 

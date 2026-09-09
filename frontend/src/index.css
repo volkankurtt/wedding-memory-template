@@ -233,6 +233,10 @@ a {
   gap: 0.45rem;
 }
 
+.cta-row:has(:only-child) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .btn {
   display: inline-flex;
   align-items: center;

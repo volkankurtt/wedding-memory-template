@@ -16,6 +16,13 @@ export function canViewUploadedPhotos<T extends { status: string }>(items: T[], 
   return !busy && isUploadQueueFinished(items) && items.some((item) => item.status === 'SUCCESS')
 }
 
+export function photoUploadThankYouMessage(successCount: number) {
+  if (successCount === 1) {
+    return 'Fotoğrafınız çiftimize ulaştı. Bu güzel anıyı bizimle paylaştığınız için teşekkür ederiz.'
+  }
+  return 'Fotoğraflarınız çiftimize ulaştı. Bu güzel anıları bizimle paylaştığınız için teşekkür ederiz.'
+}
+
 export async function runPool<T>(items: T[], worker: (item: T) => Promise<void>, concurrency = UPLOAD_CONCURRENCY) {
   let next = 0
   const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
