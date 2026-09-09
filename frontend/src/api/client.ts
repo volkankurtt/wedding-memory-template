@@ -1,5 +1,10 @@
 import type { Memory, Photo } from '../types'
+import { optimizeJpegForUpload } from '../utils/optimizeJpegForUpload'
 import { markBackendReady } from './backendReadyState'
+
+function nowMs() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
@@ -206,13 +211,13 @@ async function putOriginalToStorage(file: File, signedUrl: string, token: string
 }
 
 async function uploadPhotoDirect(file: File, uploadId: string, options?: UploadPhotoOptions) {
-  const sessionStarted = typeof performance !== 'undefined' ? performance.now() : Date.now()
+  const sessionStarted = nowMs()
   options?.onPhase?.('session')
   const session = await createUploadSession(file, uploadId)
   if (import.meta.env.DEV) {
     console.info('[dugun-anisi] uploadSessionMs', {
       uploadId,
-      ms: Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - sessionStarted),
+      ms: Math.round(nowMs() - sessionStarted),
     })
   }
   if (session.alreadyReady && session.photo) {
@@ -224,18 +229,25 @@ async function uploadPhotoDirect(file: File, uploadId: string, options?: UploadP
       throw new ApiError(500, 'Yükleme adresi üretilemedi. Lütfen tekrar deneyin.', 'http')
     }
     options?.onPhase?.('storage')
-    const storageStarted = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    const storageStarted = nowMs()
     await putOriginalToStorage(file, session.signedUrl, session.token)
     if (import.meta.env.DEV) {
       console.info('[dugun-anisi] directStorageUploadMs', {
         uploadId,
-        ms: Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - storageStarted),
+        ms: Math.round(nowMs() - storageStarted),
         bytes: file.size,
       })
     }
   }
   options?.onPhase?.('preparing')
+  const finalizeStarted = nowMs()
   const photo = await finalizePhoto(session.photoId, uploadId)
+  if (import.meta.env.DEV) {
+    console.info('[dugun-anisi] finalizeMs', {
+      uploadId,
+      ms: Math.round(nowMs() - finalizeStarted),
+    })
+  }
   options?.onPhase?.('ready')
   return photo
 }
@@ -303,14 +315,40 @@ export async function waitForApi(options?: WaitForApiOptions) {
 }
 
 export async function uploadPhotoWithRetry(file: File, uploadId: string, options?: UploadPhotoOptions) {
+  const totalStarted = nowMs()
+  const prepared = await optimizeJpegForUpload(file)
+  if (import.meta.env.DEV) {
+    console.info('[dugun-anisi] jpegOptimize', {
+      uploadId,
+      originalFileSize: prepared.originalFileSize,
+      optimizedFileSize: prepared.optimizedFileSize,
+      compressionMs: prepared.compressionMs,
+      compressionRatio: prepared.originalFileSize
+        ? prepared.optimizedFileSize / prepared.originalFileSize
+        : 1,
+      skipped: prepared.skipped,
+    })
+  }
+
+  const logTotal = () => {
+    if (import.meta.env.DEV) {
+      console.info('[dugun-anisi] totalMs', {
+        uploadId,
+        totalMs: Math.round(nowMs() - totalStarted),
+      })
+    }
+  }
+
   try {
-    const photo = await uploadPhotoDirect(file, uploadId, options)
+    const photo = await uploadPhotoDirect(prepared.file, uploadId, options)
     markBackendReady()
+    logTotal()
     return photo
   } catch (error) {
     if (!isTransientUploadError(error)) throw error
-    const photo = await uploadPhotoDirect(file, uploadId, options)
+    const photo = await uploadPhotoDirect(prepared.file, uploadId, options)
     markBackendReady()
+    logTotal()
     return photo
   }
 }
