@@ -25,7 +25,7 @@ export function HomePage() {
   return (
     <>
       <HomeHero onUpload={() => setModal('upload')} onShare={() => setModal('share')} />
-      <MemoryBook onWrite={() => setModal('memory')} />
+      <MemoryBook onWrite={() => setModal('memory')} showList />
 
       {modal === 'upload' ? (
         <Dialog title="Fotoğraflarınızı Bizimle Paylaşın" hideTitle onClose={closeUploadModal}>

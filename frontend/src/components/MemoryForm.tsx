@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { createMemory, toUserMessage } from '../api/client'
 import { MEMORY_LIMITS } from '../config/limits'
+import { useGuestState } from '../context/GuestState'
 import { IconHeart } from './Icons'
 
 type Props = {
@@ -8,6 +9,7 @@ type Props = {
 }
 
 export function MemoryForm({ onDone }: Props) {
+  const { prependMemory } = useGuestState()
   const [name, setName] = useState('')
   const [message, setMessage] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -32,10 +34,11 @@ export function MemoryForm({ onDone }: Props) {
     setBusy(true)
     setError(null)
     try {
-      await createMemory({
+      const saved = await createMemory({
         name: name.trim(),
         message: trimmedMessage,
       })
+      prependMemory(saved)
       setName('')
       setMessage('')
       setOk(true)
